@@ -1,0 +1,400 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ch2 安全框架与行业最佳实践 · Meraki 安全精读</title>
+<meta name="description" content="第 2 章笔记：框架 vs 标准、网络保险的真相、安全是团队运动、9 大关键主题与持续改进。">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<div id="progress"></div>
+
+<header class="topbar">
+  <button class="menu-btn" aria-label="打开目录">☰</button>
+  <a class="brand" href="../index.html">
+    <span class="dot"></span>
+    Meraki 安全精读
+    <small>Securing Enterprise Networks</small>
+  </a>
+  <span class="topbar-spacer"></span>
+  <a class="topbar-link hide-sm" href="../index.html#importance">重要度地图</a>
+  <a class="topbar-link" href="../index.html#chapters">章节</a>
+</header>
+
+<div class="layout">
+
+  <nav class="sidebar">
+    <div class="side-group-title">笔记目录</div>
+    <a href="../index.html"><span class="num">00</span>重要度地图</a>
+    <a href="tech-details.html"><span class="num">★</span>技术细节总库</a>
+    <a href="ch02-frameworks.html"><span class="num">02</span>安全框架与最佳实践</a>
+    <a class="soon"><span class="num">03</span>Dashboard 与云信任</a>
+    <a class="soon"><span class="num">04</span>RBAC 与最小权限</a>
+    <a href="ch05-admin-access-details.html"><span class="num">05</span>管理员访问 · 实战篇</a>
+    <a class="soon"><span class="num">06</span>安全运营与日志</a>
+    <a class="soon"><span class="num">07</span>用户认证与零信任</a>
+    <a class="soon"><span class="num">08</span>有线无线 LAN 安全</a>
+    <a class="soon"><span class="num">09</span>MX 与 WAN 安全</a>
+    <a class="soon"><span class="num">10</span>用户流量安全</a>
+    <a class="soon"><span class="num">11</span>终端设备安全</a>
+    <a class="soon"><span class="num">12</span>物理安全</a>
+    <div class="side-group-title">附录</div>
+    <a class="soon"><span class="num">A</span>安全标准对照表</a>
+  </nav>
+
+  <main>
+  <article class="content">
+
+    <div class="chapter-head">
+      <div class="eyebrow">第 2 章 · 方法论地基</div>
+      <h1>安全框架与行业最佳实践</h1>
+      <p class="subtitle">
+        这一章不教任何配置，却决定了你怎么读后面所有章节。它回答一个问题：
+        面对一堆安全标准，网络工程师到底该抓什么。
+      </p>
+      <div class="meta-row">
+        <span class="chip strong">★★★★★ 必读</span>
+        <span class="chip">Security Frameworks and Industry Best Practices</span>
+        <span class="chip">全书骨架</span>
+      </div>
+    </div>
+
+    <div class="callout tip">
+      <span class="ico">◆</span>
+      <div>
+        <p><strong>一句话总结：</strong>没有任何单一产品或平台能覆盖企业全部安全需求，
+        所以要把思维从「我买了什么」切换到「如何最小化风险」——而降低风险的最佳路径，
+        就是对齐行业最佳实践（框架 + 标准）。</p>
+      </div>
+    </div>
+
+    <h2>一、先认清代价：网络犯罪不是别人的事</h2>
+
+    <p>作者开篇让你自己去 Google 搜「cyber security breach hack leak ransom」——搜索结果触目惊心。
+    每一起事件带来的后果是连锁的：</p>
+
+    <ul>
+      <li>声誉与信任崩塌、客户流失、收入下滑</li>
+      <li>股价暴跌、企业倒闭、员工失业</li>
+      <li>高管被传唤出席政府听证会</li>
+      <li>负面媒体报道，以及社交网络上的嘲讽与恶搞（memes）</li>
+    </ul>
+
+    <h3>★ 网络保险的真相（易考）</h3>
+
+    <p>网络保险确实存在，能覆盖一部分<strong>直接成本</strong>——收入损失、通知客户的费用、数据恢复费用。但它赔不回三样东西：</p>
+
+    <ul>
+      <li>已经失去信任的客户</li>
+      <li>随之缩水的企业价值</li>
+      <li>品牌声誉</li>
+    </ul>
+
+    <div class="callout warn">
+      <span class="ico">▲</span>
+      <div>
+        <p>保险公司为了降低自身风险，保单里通常<strong>强制规定最低 IT 安全要求</strong>。
+        所以结论很反直觉：<strong>网络保险不是安全投入的替代品，反而进一步证明了良好安全实践的必要性。</strong></p>
+      </div>
+    </div>
+
+    <h2>二、思维转变：从「防火墙」到「最佳实践」</h2>
+
+    <p>作者讲了个自嘲的段子，特别好记：</p>
+
+    <div class="card">
+      <p>早年同事问：「我们安全吗？」——「安全，<strong>我们有防火墙</strong>。」</p>
+      <p>到了 2000 年代再问——「安全，我们<strong>有两台防火墙</strong>，而且<strong>来自不同厂商</strong>。」</p>
+      <p style="margin-bottom:0"><em>笑话背后是真相：攻击的数量、复杂度、可能的攻击面都在暴涨，没有任何一个功能、产品或平台能独立满足企业的全部安全需求。</em></p>
+    </div>
+
+    <p>所以要把关注点从「采购清单」转向「<strong>如何最小化风险</strong>」，而降低风险最有效的方式，就是采用行业最佳实践。</p>
+
+    <h2>三、★ 核心考点：框架（Framework）vs 标准（Standard）</h2>
+
+    <p>这是整章最需要记牢的一句话：</p>
+
+    <div class="vs">
+      <div>
+        <div class="vs-title">Framework 框架</div>
+        <div class="vs-main">告诉你「做什么」</div>
+        <p>提供指导，帮你界定网络安全架构、流程与政策的<strong>范围</strong>。</p>
+      </div>
+      <div>
+        <div class="vs-title">Standard 标准</div>
+        <div class="vs-main">告诉你「怎么做」</div>
+        <p>给出安全能力的具体细节、所需特性与技术规格，可直接落地与审计。</p>
+      </div>
+    </div>
+
+    <div class="callout info">
+      <span class="ico">i</span>
+      <div>
+        <p>本书把「框架 + 标准」统称为<strong>行业最佳实践（industry best practice）</strong>。
+        优秀的最佳实践都包含<strong>持续改进</strong>机制，因此每隔几年就会被更新一次。</p>
+      </div>
+    </div>
+
+    <h3>常见的框架</h3>
+
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>名称</th><th>发布方</th><th>要点</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><strong>NIST CSF 2.0</strong></td>
+            <td>美国商务部 NIST</td>
+            <td>美国联邦机构强制，但设计上任何行业组织都能用</td>
+          </tr>
+          <tr>
+            <td><strong>NIST 800-53 Rev.5</strong></td>
+            <td>NIST</td>
+            <td>安全<em>标准</em>，把控制项映射到 CSF 的分类；实践中与 CSF 配套使用，且被各国广泛引用</td>
+          </tr>
+          <tr>
+            <td><strong>Essential Eight</strong></td>
+            <td>澳大利亚 ACSC</td>
+            <td>澳政府机构强制；<em>唯一明确要求 IP 白名单</em>的框架（第 5 章会用到）</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>常见的标准</h3>
+
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>名称</th><th>适用领域</th><th>要点</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><strong>PCI DSS v4.0</strong></td>
+            <td>支付卡</td>
+            <td>全球适用；写得清楚、要求都是常识，作者称其为「IT 安全版的 For Dummies」。<strong>若没有标准适用于你，就用 PCI 作基线。</strong></td>
+          </tr>
+          <tr>
+            <td><strong>HIPAA</strong></td>
+            <td>医疗（美国）</td>
+            <td>保护电子受保护健康信息（ePHI）的机密性、完整性、可用性</td>
+          </tr>
+          <tr>
+            <td><strong>SOC 2</strong></td>
+            <td>客户数据</td>
+            <td>证明企业可被信任地保管客户信息，外包与云服务场景关键</td>
+          </tr>
+          <tr>
+            <td><strong>ISO 27001</strong></td>
+            <td>信息安全管理体系</td>
+            <td>信息系统管理的最佳实践，认证即代表管理体系达标</td>
+          </tr>
+          <tr>
+            <td><strong>GDPR</strong></td>
+            <td>欧盟个人数据</td>
+            <td>保护 EU 公民个人数据；<strong>只要向 EU 提供商品或服务就适用</strong>，即使公司不在 EU</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>新趋势：标准会「顺着业务关系」传导</h3>
+
+    <div class="callout warn">
+      <span class="ico">▲</span>
+      <div>
+        <p>新标准的一个趋势是：<strong>你可能仅因为「和谁做生意」就被纳入适用范围。</strong>
+        NIST CSF 也要求把安全要求写进第三方合同，且对这些供应商施加同等的常规评估义务——
+        这就避免了机构把义务「外包」出去。所以你还需要让<strong>价值链上的伙伴</strong>知道你受哪些标准约束，因为他们也就被间接约束了。</p>
+      </div>
+    </div>
+
+    <h2>四、安全是团队运动（Security as a Team Sport）</h2>
+
+    <p>翻开任何一份最佳实践原文，你都会发现它「不是只写给网络工程师的」——里面大量法律术语，很多条款看起来跟你无关。这正是「团队运动」的含义：<strong>落地最佳实践需要组织里每个人都出力</strong>，而且很多标准的第一条要求就是<strong>明确划分角色与职责</strong>。</p>
+
+    <p>搞清楚职责边界后，把所有安全要求分进三个桶：</p>
+
+    <ol class="keypoints">
+      <li>你<strong>负全责</strong>的</li>
+      <li>你能<strong>支持别人达成</strong>的</li>
+      <li><strong>完全由别人负责</strong>的</li>
+    </ol>
+
+    <div class="callout tip">
+      <span class="ico">◆</span>
+      <div>
+        <p>支持其他团队最典型的方式，就是<strong>提供第二道防线</strong>。例如：即使只有部分应用或数据需要加密，
+        也把整条 WAN 链路都加密掉。有时候这件事只是<strong>打开现有平台上已有的功能</strong>，甚至不产生额外成本。</p>
+      </div>
+    </div>
+
+    <h2>五、★★ 全书骨架：9 大关键主题</h2>
+
+    <p>作者做了一件很实在的事：把前面提到的各套标准全读了一遍，提炼出约 <strong>100 条</strong>与 IT 团队相关的要求，
+    归一化整理到<strong>附录 A</strong>，再归纳成 9 个主题。后面每一章，都是在用 Meraki 逐个落地这些主题。</p>
+
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>#</th><th>关键主题</th><th>Meraki 对应落点</th></tr></thead>
+        <tbody>
+          <tr><td>1</td><td><strong>最小权限原则</strong>（含 RBAC）</td><td>Ch4 角色与标签作用域</td></tr>
+          <tr><td>2</td><td><strong>强认证</strong>（含 MFA）</td><td>Ch5 管理员访问与 SSO</td></tr>
+          <tr><td>3</td><td><strong>零信任原则</strong></td><td>Ch7 先认证再授权访问</td></tr>
+          <tr><td>4</td><td><strong>控制措施</strong></td><td>Ch10 防火墙 / IPS / 反恶意软件</td></tr>
+          <tr><td>5</td><td><strong>加密</strong></td><td>Ch9 WAN 加密</td></tr>
+          <tr><td>6</td><td><strong>分段</strong>（物理 + 逻辑）</td><td>Ch8 VLAN / 隔离</td></tr>
+          <tr><td>7</td><td><strong>物理安全</strong></td><td>Ch12 MV 摄像头</td></tr>
+          <tr><td>8</td><td><strong>日志记录</strong></td><td>Ch6 日志与审计</td></tr>
+          <tr><td>9</td><td><strong>监控 / 事件响应</strong></td><td>Ch6 告警、SIEM、响应流程</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="callout tip">
+      <span class="ico">◆</span>
+      <div>
+        <p><strong>把这张表当成全书的地图。</strong>后面 10 章的内容，本质上就是这 9 行往下展开。
+        读书迷路时，回到这张表问自己：我现在在补哪一个主题？</p>
+      </div>
+    </div>
+
+    <h2>六、持续改进（Continuous Improvement）</h2>
+
+    <p>义务搞清楚了、控制措施也落地了，然后就结束了？并没有。标准的版本会演进，而你的<strong>年度审计是按当年版本做的</strong>，所以必须持续跟进。</p>
+
+    <h3>★ 必记的例子：PCI DSS v4.0 的密码长度</h3>
+
+    <div class="card">
+      <p>PCI DSS v4.0（2022 年发布）把<strong>最小密码长度从 7 位提高到 12 位</strong>。
+      在 PCI DSS 3.2.1 于 <strong>2024 年 3 月</strong>淘汰之前，所有涉及支付处理的实体都必须更新系统与流程以符合新规。</p>
+    </div>
+
+    <div class="callout warn">
+      <span class="ico">▲</span>
+      <div>
+        <p><strong>这个例子的真正考点是「集中管理能力」。</strong>
+        密码长度这种策略，在 Meraki Dashboard 里改一次就全组织生效；
+        如果你负责一个大网络却在一台台设备上手工改配置，那你就「有得忙了」。
+        <strong>能否集中更新策略，是一个关键的架构设计考量。</strong></p>
+      </div>
+    </div>
+
+    <h3>审计与渗透测试</h3>
+
+    <ul>
+      <li>强烈建议（且常被强制要求）<strong>审计控制措施的有效性</strong></li>
+      <li>验证手段之一：聘请<strong>渗透测试</strong>服务——务必选择<strong>信誉良好且合乎道德</strong>的服务商</li>
+      <li>合规审计建议<strong>至少每年一次</strong>，并聘请<strong>外部审计师</strong>以获得最客观的评估</li>
+      <li>NIST CSF 要求「<strong>持续评估</strong>」，包括评审、审计、评估，以及对第三方的「常规」评估</li>
+      <li>注意：你适用标准所要求的审计频率，可能<strong>远比你预期的频繁</strong></li>
+    </ul>
+
+    <h2>七、本章小结的隐藏重点</h2>
+
+    <p>作者在 Summary 里放了一句很重的话，容易被略过：</p>
+
+    <div class="callout danger">
+      <span class="ico">!</span>
+      <div>
+        <p><strong>「通常最大的挑战在 OSI 模型之上的一层——人。」</strong>
+        所以，不要低估对管理员、领导层和普通用户进行<strong>持续安全教育</strong>的重要性。</p>
+      </div>
+    </div>
+
+    <p>其余要点：以行业最佳实践作为「大局视角」，把网络工程师的局部努力对接到组织整体目标；
+    选定适用的标准、确保覆盖 9 大主题；建立审计与合规职能，保证控制措施到位且持续有效；
+    最后，可以考虑积极参与标准组织，在框架变更征求意见时提交反馈。</p>
+
+    <hr>
+
+    <h2>易考点与常见误区</h2>
+
+    <div class="callout warn">
+      <span class="ico">▲</span>
+      <div>
+        <p><strong>误区 1：买了安全产品就等于安全了。</strong>错。没有任何单一产品能满足全部需求，要看风险是否被有效降低。</p>
+      </div>
+    </div>
+
+    <div class="callout warn">
+      <span class="ico">▲</span>
+      <div>
+        <p><strong>误区 2：买了网络保险就可以松口气。</strong>错。保险只赔直接成本，赔不回信任与客户，且保单会反过来强制你满足最低安全要求。</p>
+      </div>
+    </div>
+
+    <div class="callout warn">
+      <span class="ico">▲</span>
+      <div>
+        <p><strong>误区 3：框架和标准是一回事。</strong>错。框架说「做什么」（NIST CSF、Essential Eight），标准说「怎么做」（PCI DSS、HIPAA、ISO 27001、SOC 2）。</p>
+      </div>
+    </div>
+
+    <div class="callout warn">
+      <span class="ico">▲</span>
+      <div>
+        <p><strong>误区 4：安全达标是一劳永逸的。</strong>错。标准会持续更新（如 PCI 密码长度 7 → 12），审计按当年版本执行。</p>
+      </div>
+    </div>
+
+    <div class="callout info">
+      <span class="ico">i</span>
+      <div>
+        <p><strong>两个容易被忽略的细节：</strong>
+        ① 不知道适用哪个标准时，用 <strong>PCI 作基线</strong>；
+        ② <strong>GDPR 具有域外效力</strong>——不在欧盟也可能被约束。</p>
+      </div>
+    </div>
+
+    <h2>记忆口诀</h2>
+
+    <div class="mnemonic">
+      <span class="label">速记</span>
+      <div class="text">
+        框架说做什么，标准说怎么做；<br>
+        保险赔钱不赔信任，基线看 PCI；<br>
+        最小权限 · 强认证 · 零信任 · 控制 · 加密<br>
+        分段 · 物理 · 日志 · 监控响应——九大主题<br>
+        标准年年变，策略要能集中改；<br>
+        最后一道坎，永远是人。
+      </div>
+    </div>
+
+    <h2>关键要点清单</h2>
+
+    <ol class="keypoints">
+      <li>没有单一产品能满足企业全部安全需求 → 目标是最小化风险，路径是对齐最佳实践</li>
+      <li>网络保险只覆盖直接成本，不赔信任与客户，且会强制最低安全要求</li>
+      <li><strong>框架 = 做什么</strong>（NIST CSF、Essential Eight）；<strong>标准 = 怎么做</strong>（PCI DSS、HIPAA、ISO 27001、SOC 2）</li>
+      <li>没有适用标准时，以 PCI DSS 作为基线；GDPR 有域外效力</li>
+      <li>新标准会顺着业务关系传导，需把要求写进第三方合同</li>
+      <li>安全是团队运动：把要求分成「我负责 / 我支持 / 别人负责」三类，主动提供第二道防线</li>
+      <li>九大主题 = 最小权限、强认证、零信任、控制措施、加密、分段、物理安全、日志、监控响应</li>
+      <li>持续改进：PCI DSS v4.0 最小密码长度 7 → 12；关键设计考量是<strong>策略能否集中更新</strong></li>
+      <li>至少每年审计一次，优先外部审计师；渗透测试要选合乎道德的服务商</li>
+      <li>最大的挑战在 OSI 之上——人，持续教育不可低估</li>
+    </ol>
+
+    <div class="pager">
+      <a class="disabled">
+        <span class="dir">上一章</span>
+        <span class="ttl">导论（未上线）</span>
+      </a>
+      <a class="next" href="../index.html">
+        <span class="dir">返回</span>
+        <span class="ttl">重要度地图与章节列表 →</span>
+      </a>
+    </div>
+
+  </article>
+
+  <footer>
+    <p>Cisco Meraki 企业网络安全 · 中文精读笔记<br>
+    基于《Securing Enterprise Networks with Cisco Meraki》第 2 章整理 · 仅供学习参考</p>
+  </footer>
+  </main>
+</div>
+
+<div id="overlay"></div>
+<script src="../assets/app.js"></script>
+</body>
+</html>

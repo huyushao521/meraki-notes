@@ -1,0 +1,361 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ch5 技术细节与实战案例 · Meraki 安全精读</title>
+<meta name="description" content="第 5 章技术细节逐条拆解 + 四个真实场景案例：共享账号、IP 白名单锁死、MFA 手机丢失、迁移 SSO 后审计不通过。">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<div id="progress"></div>
+
+<header class="topbar">
+  <button class="menu-btn" aria-label="打开目录">☰</button>
+  <a class="brand" href="../index.html">
+    <span class="dot"></span>
+    Meraki 安全精读
+    <small>Securing Enterprise Networks</small>
+  </a>
+  <span class="topbar-spacer"></span>
+  <a class="topbar-link hide-sm" href="../index.html#importance">重要度地图</a>
+  <a class="topbar-link" href="../index.html#chapters">章节</a>
+</header>
+
+<div class="layout">
+
+  <nav class="sidebar">
+    <div class="side-group-title">笔记目录</div>
+    <a href="../index.html"><span class="num">00</span>重要度地图</a>
+    <a href="tech-details.html"><span class="num">★</span>技术细节总库</a>
+    <a href="ch02-frameworks.html"><span class="num">02</span>安全框架与最佳实践</a>
+    <a class="soon"><span class="num">03</span>Dashboard 与云信任</a>
+    <a class="soon"><span class="num">04</span>RBAC 与最小权限</a>
+    <a href="ch05-admin-access-details.html"><span class="num">05</span>管理员访问 · 实战篇</a>
+    <a class="soon"><span class="num">06</span>安全运营与日志</a>
+    <a class="soon"><span class="num">07</span>用户认证与零信任</a>
+    <a class="soon"><span class="num">08</span>有线无线 LAN 安全</a>
+    <a class="soon"><span class="num">09</span>MX 与 WAN 安全</a>
+    <a class="soon"><span class="num">10</span>用户流量安全</a>
+    <a class="soon"><span class="num">11</span>终端设备安全</a>
+    <a class="soon"><span class="num">12</span>物理安全</a>
+    <div class="side-group-title">附录</div>
+    <a class="soon"><span class="num">A</span>安全标准对照表</a>
+  </nav>
+
+  <main>
+  <article class="content">
+
+    <div class="chapter-head">
+      <div class="eyebrow">第 5 章 · 技术细节与实战</div>
+      <h1>管理员访问安全：逐条拆解 + 四个翻车现场</h1>
+      <p class="subtitle">
+        这一章是全书技术细节最密的地方之一：每一条控制都有明确的 Dashboard 路径、默认值、推荐值，
+        以及对应的合规条款编号。下面先列细节，再用四个真实场景讲清楚「细节没对齐会怎么死」。
+      </p>
+      <div class="meta-row">
+        <span class="chip strong">★★★★★ 必读</span>
+        <span class="chip">技术细节密度：极高</span>
+        <span class="chip">配置级 · 含条款编号</span>
+      </div>
+    </div>
+
+    <div class="callout info">
+      <span class="ico">i</span>
+      <div>
+        <p><strong>说明：</strong>下面的「技术细节」全部来自书中原文（标注页码）；
+        <strong>四个案例是场景化推演</strong>，用于把细节映射到真实决策，不是书中原文案例。
+        书中自带案例是作者的实验室环境 <code>adp_se_lab</code>。</p>
+      </div>
+    </div>
+
+    <h2>一、技术细节总表（可直接当配置清单）</h2>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>控制项</th><th>Dashboard 位置</th><th>默认值</th><th>推荐值</th><th>合规依据</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>密码时效</strong></td>
+            <td><code>Organization &gt; Settings</code></td>
+            <td>禁用（永不过期）</td>
+            <td>90 天</td>
+            <td>PCI DSS 8.3.10.1</td>
+          </tr>
+          <tr>
+            <td><strong>密码复用</strong></td>
+            <td><code>Organization &gt; Settings</code></td>
+            <td>阻止最近 2 个</td>
+            <td>≥ 4 个</td>
+            <td>PCI DSS 4.0</td>
+          </tr>
+          <tr>
+            <td><strong>强密码</strong></td>
+            <td><code>Organization &gt; Settings</code></td>
+            <td>不启用</td>
+            <td>启用（8 位 + 3 类字符，且不含常见词）</td>
+            <td>PCI / NIST 通用</td>
+          </tr>
+          <tr>
+            <td><strong>账户锁定</strong></td>
+            <td><code>Organization &gt; Settings</code></td>
+            <td>不启用</td>
+            <td>10 次</td>
+            <td>NIST 800-53 AC-7 / PCI DSS 8.3.4</td>
+          </tr>
+          <tr>
+            <td><strong>闲置超时</strong></td>
+            <td><code>Organization &gt; Settings</code></td>
+            <td>禁用</td>
+            <td>15 分钟（可设 1～2,147,483,647）</td>
+            <td>PCI DSS 4.0 要求 8.2</td>
+          </tr>
+          <tr>
+            <td><strong>IP 白名单</strong></td>
+            <td><code>Organization &gt; Settings</code></td>
+            <td>禁用（全球任意 IP 可登录）</td>
+            <td>3～10 个子网</td>
+            <td>Essential Eight（唯一明确要求）</td>
+          </tr>
+          <tr>
+            <td><strong>MFA（用户级）</strong></td>
+            <td><code>My Profile &gt; Set Up Two-Factor Authentication</code></td>
+            <td>关闭</td>
+            <td>所有人开启（Duo 或 SMS）</td>
+            <td>各标准通用强制项</td>
+          </tr>
+          <tr>
+            <td><strong>MFA（组织级）</strong></td>
+            <td><code>Organization &gt; Settings</code></td>
+            <td>不强制</td>
+            <td>勾选强制；需先有 ≥1 个账户启用</td>
+            <td>各标准通用强制项</td>
+          </tr>
+          <tr>
+            <td><strong>SAML SSO</strong></td>
+            <td><code>Organization &gt; Administrators</code></td>
+            <td>未启用</td>
+            <td>IdP + SP 两种发起方式都配</td>
+            <td>—（治理手段）</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2>二、容易被忽略的技术细节</h2>
+
+    <h3>1. IP 白名单的输入格式与「防手滑」机制</h3>
+    <ul>
+      <li>支持<strong>单个 IPv4/IPv6 地址</strong>、<strong>带连字符的 IPv4 范围</strong>（如 <code>10.0.0.1-10.0.0.50</code>）、<strong>CIDR 子网</strong>（如 <code>/24</code>）</li>
+      <li>多条规则<strong>每条必须单独一行</strong></li>
+      <li>可分别限制「Dashboard + API」或「仅 API」</li>
+      <li>Dashboard 会显示你当前连接的 IP，并<strong>强制把它包含进去</strong>（防手滑保护）</li>
+      <li>建议同时限制 IPv4 和 IPv6——只限 IPv4 等于留了个后门</li>
+    </ul>
+
+    <h3>2. 闲置超时的实际行为</h3>
+    <p>接近阈值时会<strong>弹窗询问</strong>「继续会话或立即登出」；不理会则自动登出，回来需重新认证。
+    该设置对<strong>所有会话生效</strong>——本地账户和 SAML 外部目录账户一视同仁。</p>
+
+    <h3>3. MFA 的两个「不直观」事实</h3>
+    <div class="callout warn">
+      <span class="ico">▲</span>
+      <div>
+        <p>①<strong>必须有至少 1 个管理员先启用 MFA</strong>，否则无法在组织级强制，Dashboard 会直接报错。
+        ②<strong>启用 MFA 不影响 API 访问</strong>——MFA 只作用于 Dashboard 的管理登录，Dashboard API 照常工作。</p>
+      </div>
+    </div>
+
+    <h3>4. 「关掉全局策略」不等于「关掉某个人的 2FA」</h3>
+    <p>组织策略只决定「是否强制」；取消勾选只是<em>允许</em>用户自行关闭，不会自动关闭任何人的 2FA。</p>
+
+    <h3>5. 启用密码时效会强制登出</h3>
+    <p>首次启用 90 天时效时，<strong>已成密码超龄的管理员会被登出并被迫立即改密</strong>。这一步要走变更流程，否则会被当成故障。</p>
+
+    <h3>6. SAML 上线后，控制权会转移</h3>
+    <p>用户不再「住在」Dashboard 里，MFA 与密码策略必须成为 SSO 设计的一部分。
+    <strong>Dashboard 的 IP 白名单只对本地账户生效</strong>，SAML 场景必须同时在 IdP/Duo 侧配置，才能保证无论哪种登录方式策略都生效。</p>
+
+    <hr>
+
+    <h2>三、四个翻车现场</h2>
+
+    <div class="callout tip">
+      <span class="ico">◆</span>
+      <div>
+        <p>下面每个案例都按<strong>现象 → 技术根因 → 处置 → 复盘</strong>四步走。
+        这不是危言耸听，都是这套配置最容易踩的坑。</p>
+      </div>
+    </div>
+
+    <!-- 案例 1 -->
+    <div class="card">
+      <h3 style="margin-top:0">案例 1｜五个运维共用一个 admin 账号</h3>
+      <p><strong>背景：</strong>一家连锁零售企业，60 家门店，5 名运维共用一个 <code>it-admin@</code> 账号管理整个组织。</p>
+      <p><strong>现象：</strong>某门店遭遇勒索软件，横向感染了 POS 网段。事后复盘时发现，事发前一晚有人关闭了该门店的 Layer 3 防火墙规则——但<strong>查不出是谁</strong>。</p>
+      <p><strong>技术根因：</strong>Dashboard 的日志既能记录「改了什么、何时改」，也能记录「<strong>谁</strong>改的」——但这个能力完全依赖<strong>唯一用户 ID</strong>。
+      账号一共享，所有人都是 <code>it-admin@</code>，审计链当场断裂。PCI DSS 8.2 要求唯一用户 ID，正是为了这一刻。</p>
+      <p><strong>处置：</strong></p>
+      <ul>
+        <li>为每人建独立管理员账号：<code>Organization &gt; Administrators &gt; Add Admin</code> → 填姓名 + <strong>企业邮箱</strong> → 设权限 → <code>Create Admin</code> → <strong><code>Save Changes</code></strong></li>
+        <li>对方收验证邮件 → 自设密码 → 再收 6 位验证码（这个流程同时满足 PCI 8.3.5 的「避免默认密码」）</li>
+        <li>用<strong>标签（Tags）</strong>限定每人只管自己负责的门店，落实最小权限</li>
+      </ul>
+      <p><strong>复盘：</strong>共享账号不只是合规污点，它直接剥夺了你在事件响应时<strong>定责与止损</strong>的能力。
+      Meraki 没有技术手段阻止共享账号，只能靠「唯一 ID + 限制并发登录 + MFA + 定期改密」的组合来管。</p>
+    </div>
+
+    <!-- 案例 2 -->
+    <div class="card">
+      <h3 style="margin-top:0">案例 2｜IP 白名单只填了一个出口 IP</h3>
+      <p><strong>背景：</strong>管理员抱着「越严格越安全」的想法，把 Dashboard 登录 IP 白名单设成<strong>总部出口的单个公网 IP</strong>。</p>
+      <p><strong>现象：</strong>ISP 更换链路，出口 IP 变了；同一周团队开始居家办公。结果<strong>全员无法登录 Dashboard</strong>，连改回来的入口都没有。</p>
+      <p><strong>技术根因：</strong>书里明确警告这一点——<strong>这类改动一旦把自己锁在外面，非常难以撤销</strong>。
+      Dashboard 的「强制包含当前 IP」只防手滑，防不了 ISP 变更。建议配置 <strong>3～10 个不同子网</strong>，而不是一个子网、更不是一个 IP。</p>
+      <p><strong>处置：</strong></p>
+      <ul>
+        <li>按 Meraki 官方文档 <em>Locked Out of Dashboard</em> 流程申请恢复</li>
+        <li>重建白名单时逐项覆盖：总部出口 ×2、VPN 地址池、<strong>带外管理公网子网</strong>、运维人员常用的家宽/移动网络子网</li>
+        <li>IPv4 与 IPv6 都要限；自有公网地址段优先（换 ISP 也能保留）</li>
+      </ul>
+      <p><strong>复盘：</strong>上线前从<strong>所有可能的接入方式</strong>逐一访问该页面，把子网攒齐。
+      并且把 IP 白名单写进<strong>灾备计划（DR）</strong>——应急时从哪登录，必须提前写清楚。
+      另外记住：即使限制到 100 万个地址，相比 IPv6 的天文数字，攻击面依然被大幅压缩。</p>
+    </div>
+
+    <!-- 案例 3 -->
+    <div class="card">
+      <h3 style="margin-top:0">案例 3｜MFA 上线后，唯一绑定的手机丢了</h3>
+      <p><strong>背景：</strong>企业刚在组织级强制 MFA，为图省事只用 SMS，且只绑了一个号码。</p>
+      <p><strong>现象：</strong>该管理员出国期间手机丢失，号码已被运营商停机。他自己进不去，团队里也没人有第二套 MFA 凭据。</p>
+      <p><strong>技术根因：</strong>三个准备动作全部缺失：</p>
+      <ul>
+        <li>注册时的 <strong>8 个一次性备份码</strong>没抄下来（书里强调<strong>第一步就先记下</strong>，存进 1Password/LastPass 这类密码管理器）</li>
+        <li>没配<strong>备用手机号</strong></li>
+        <li>用 Duo 的话没启用 <strong>Duo Restore</strong></li>
+      </ul>
+      <p><strong>处置（书中给出 4 条恢复路径）：</strong></p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>方法</th><th>前提条件</th><th>适用场景</th></tr></thead>
+          <tbody>
+            <tr><td>用备份码</td><td>注册时已抄下 8 个码</td><td>最快，任何情况</td></tr>
+            <tr><td>备用手机号收码</td><td>事先配了 backup number</td><td>主号码不可用</td></tr>
+            <tr><td>Duo Restore</td><td>新设备 + 之前启用了 Duo Restore</td><td>换机 / 手机丢失</td></tr>
+            <tr><td>让另一管理员删除账号并重建</td><td>还有另一个可用管理员</td><td>兜底手段</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p><strong>复盘：</strong>强制全员 MFA 之前，必须确保有<strong>至少两个「已知可用」的 MFA 管理员账号</strong>——
+      紧急时第二个账号能把策略关掉。这也是联系 Meraki 支持前的前提条件。走完这些准备，理论上永远不需要开 case。</p>
+    </div>
+
+    <!-- 案例 4 -->
+    <div class="card">
+      <h3 style="margin-top:0">案例 4｜迁移 SSO 之后，PCI 审计反而不过了</h3>
+      <p><strong>背景：</strong>企业为统一身份管理，把 Dashboard 迁移到 SAML SSO，接 Entra ID + Duo。迁移「很顺利」。</p>
+      <p><strong>现象：</strong>年度 PCI 审计被开问题：最小密码长度只有 8 位、只阻止最近 1 个密码复用，
+      而且——<strong>Dashboard 里根本找不到这些设置的入口了</strong>。</p>
+      <p><strong>技术根因：</strong>这是本章最重要的认知——<strong>用户一旦外部托管，就不再「住」在 Dashboard 里，
+      密码与 MFA 的控制权随之转移到 IdP</strong>。而 Entra ID 的默认值在<strong>云账户</strong>下大部分改不了：</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>控制项</th><th>Entra 默认</th><th>云账户能否自定义</th></tr></thead>
+          <tbody>
+            <tr><td>密码时效</td><td>90 天</td><td>仅能通过 PowerShell <code>Set-MsolPasswordPolicy</code> 调整</td></tr>
+            <tr><td>密码复用</td><td>阻止最近 1 个</td><td><strong>不能改</strong>，需同步本地 AD 才能满足</td></tr>
+            <tr><td>密码复杂度</td><td>3/4 类字符 + 8 位</td><td><strong>不能改</strong></td></tr>
+            <tr><td>账户锁定</td><td>10 次 / 锁定 60 秒</td><td>可配（1～50 次，5～18000 秒）</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p><strong>处置：</strong></p>
+      <ul>
+        <li>要满足更严的密码策略，<strong>必须同步本地 Active Directory</strong>（或改用支持自定义策略的方案）</li>
+        <li><strong>补配 Duo 侧控制</strong>：Dashboard 的 IP 白名单只对本地账户生效，SAML 场景要在 Duo 里配
+          <code>Policies &gt; Authorized Networks</code>，并勾选 <code>Deny Access from All Other Networks</code></li>
+        <li>顺便启用 geoblocking、Access Reviews（30 天不登录视为不活跃）、临时账号到期自动禁用</li>
+      </ul>
+      <p><strong>复盘：</strong>迁移 SSO <strong>之前</strong>先做一次「控制项差距评估」，逐条确认哪些控制随身份一起搬走了、新平台能否达到同等或更严的水平。
+      否则就是「迁移成功、审计失败」——控制权转移了，责任并没有转移。</p>
+    </div>
+
+    <h2>四、这本书的技术细节边界在哪</h2>
+
+    <p>为了避免误解，我把书里技术细节的「颗粒度」说清楚：</p>
+
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>书中<strong>有</strong>的（配置级）</th><th>书中<strong>没有</strong>的（协议/机理级）</th></tr></thead>
+        <tbody>
+          <tr>
+            <td>
+              精确菜单路径与勾选顺序<br>
+              功能默认值与推荐值<br>
+              参数取值范围（如 1～2,147,483,647 分钟）<br>
+              合规条款编号（PCI 8.3.10.1、NIST AC-7）<br>
+              方案对比（配置步骤数、难度、优缺点）<br>
+              每种方案的适用场景与限制
+            </td>
+            <td>
+              SAML XML 断言的字段结构与签名算法<br>
+              802.1X 的 EAP 报文交互细节<br>
+              IPS 签名匹配引擎原理<br>
+              RADIUS 属性（Attribute）的具体编码<br>
+              证书链校验过程
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="callout info">
+      <span class="ico">i</span>
+      <div>
+        <p>换句话说：这本书是<strong>「怎么配 + 为什么这么配 + 对应哪条合规」</strong>，
+        而不是「协议怎么跑」。想深入协议层，得再配 Cisco 官方文档和 RFC。</p>
+        <p style="margin-bottom:0">从已核实的内容看，技术细节密度最高的几章是
+        <strong>Ch5（管理员访问）、Ch7（用户认证）、Ch8（LAN 安全）、Ch10（流量安全）</strong>——
+        Ch7 甚至给出了每种认证方案的「配置步骤数量」和「难度评级」。</p>
+      </div>
+    </div>
+
+    <h2>记忆口诀</h2>
+
+    <div class="mnemonic">
+      <span class="label">配置清单速记</span>
+      <div class="text">
+        密码九十天一换，四个不复用，八位三类字符；<br>
+        错十次就锁定，闲十五分登出；<br>
+        白名单三到十段，IPv6 别放过；<br>
+        先开一人 MFA，再强制全员，八个码子先抄；<br>
+        上了 SSO 别忘记——控制在 IdP，白名单去 Duo。
+      </div>
+    </div>
+
+    <div class="pager">
+      <a href="ch02-frameworks.html">
+        <span class="dir">上一章</span>
+        <span class="ttl">Ch2 安全框架与行业最佳实践</span>
+      </a>
+      <a class="next" href="../index.html">
+        <span class="dir">返回</span>
+        <span class="ttl">重要度地图与章节列表 →</span>
+      </a>
+    </div>
+
+  </article>
+
+  <footer>
+    <p>Cisco Meraki 企业网络安全 · 中文精读笔记<br>
+    技术细节依据《Securing Enterprise Networks with Cisco Meraki》第 5 章（第 85–193 页）· 案例为场景化推演</p>
+  </footer>
+  </main>
+</div>
+
+<div id="overlay"></div>
+<script src="../assets/app.js"></script>
+</body>
+</html>

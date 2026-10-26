@@ -1,0 +1,257 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Cisco Meraki 企业网络安全 · 中文精读笔记</title>
+<meta name="description" content="《Securing Enterprise Networks with Cisco Meraki》中文精读笔记：重点提炼、易考点、实操配置与记忆口诀。">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+<div id="progress"></div>
+
+<header class="topbar">
+  <button class="menu-btn" aria-label="打开目录">☰</button>
+  <a class="brand" href="index.html">
+    <span class="dot"></span>
+    Meraki 安全精读
+    <small>Securing Enterprise Networks</small>
+  </a>
+  <span class="topbar-spacer"></span>
+  <a class="topbar-link hide-sm" href="#importance">重要度地图</a>
+  <a class="topbar-link" href="#chapters">章节</a>
+</header>
+
+<div class="layout">
+
+  <nav class="sidebar">
+    <div class="side-group-title">笔记目录</div>
+    <a href="index.html"><span class="num">00</span>重要度地图</a>
+    <a href="notes/tech-details.html"><span class="num">★</span>技术细节总库</a>
+    <a href="notes/ch02-frameworks.html"><span class="num">02</span>安全框架与最佳实践</a>
+    <a class="soon"><span class="num">03</span>Dashboard 与云信任</a>
+    <a class="soon"><span class="num">04</span>RBAC 与最小权限</a>
+    <a href="notes/ch05-admin-access-details.html"><span class="num">05</span>管理员访问 · 实战篇</a>
+    <a class="soon"><span class="num">06</span>安全运营与日志</a>
+    <a class="soon"><span class="num">07</span>用户认证与零信任</a>
+    <a class="soon"><span class="num">08</span>有线无线 LAN 安全</a>
+    <a class="soon"><span class="num">09</span>MX 与 WAN 安全</a>
+    <a class="soon"><span class="num">10</span>用户流量安全</a>
+    <a class="soon"><span class="num">11</span>终端设备安全</a>
+    <a class="soon"><span class="num">12</span>物理安全</a>
+    <div class="side-group-title">附录</div>
+    <a class="soon"><span class="num">A</span>安全标准对照表</a>
+  </nav>
+
+  <main>
+    <div class="hero">
+      <div class="eyebrow">中文精读笔记 · 持续更新</div>
+      <h1>用 Meraki 把安全标准<br>一条条落地</h1>
+      <p class="lead">
+        基于《Securing Enterprise Networks with Cisco Meraki》整理的要点笔记。
+        只保留真正重要的内容：核心概念、决策要点、实操配置、易考点与记忆口诀。
+      </p>
+    </div>
+
+    <div class="stat-row">
+      <div class="stat"><div class="n">13</div><div class="l">章节 + 附录</div></div>
+      <div class="stat"><div class="n">9</div><div class="l">贯穿全书主题</div></div>
+      <div class="stat"><div class="n">100+</div><div class="l">条合规要求</div></div>
+      <div class="stat"><div class="n">6</div><div class="l">篇笔记已上线</div></div>
+    </div>
+
+    <div class="callout tip">
+      <span class="ico">◆</span>
+      <div>
+        <p><strong>新增：<a href="notes/tech-details.html">技术细节总库</a></strong>　
+        把全书 12 章的配置级参数、合规条款编号（PCI DSS / NIST 800-53）、默认值对照、限制与坑汇总成速查表，
+        每条都标注了原书页码。</p>
+        <p style="margin-bottom:0">
+          <a href="notes/tech-ch06-ch07.html">Ch6-07 安全运营 · 用户认证</a> ·
+          <a href="notes/tech-ch08-ch09.html">Ch8-09 LAN · WAN</a> ·
+          <a href="notes/tech-ch10-ch12.html">Ch10-12 流量 · 终端 · 物理</a>
+        </p>
+      </div>
+    </div>
+
+    <div class="section-title" id="importance">重要度地图 · 哪些内容真正重要</div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>重要度</th><th>章节</th><th>为什么重要</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><span class="stars">★★★★★</span></td>
+            <td><strong>Ch2</strong> 安全框架</td>
+            <td>全书方法论地基：框架 vs 标准、9 大主题都出自这里，后面每章都在还这笔账</td>
+          </tr>
+          <tr>
+            <td><span class="stars">★★★★★</span></td>
+            <td><strong>Ch5</strong> 管理员访问</td>
+            <td>投入最小、收益最大的防护；凭据泄露是第 2 大入侵途径，实操密度最高</td>
+          </tr>
+          <tr>
+            <td><span class="stars">★★★★★</span></td>
+            <td><strong>Ch10</strong> 用户流量安全</td>
+            <td>控制措施主战场：URL 过滤、IDS/IPS、AMP、Secure Connect、CASB、DLP</td>
+          </tr>
+          <tr>
+            <td><span class="stars">★★★★<span class="off">★</span></span></td>
+            <td><strong>Ch4 / Ch7 / Ch8</strong></td>
+            <td>最小权限、强认证、分段与准入——零信任的三根支柱，配置细节最多</td>
+          </tr>
+          <tr>
+            <td><span class="stars">★★★★<span class="off">★</span></span></td>
+            <td><strong>Ch9</strong> WAN 安全</td>
+            <td>加密主题的落地点：Auto VPN、vMX、云上组网</td>
+          </tr>
+          <tr>
+            <td><span class="stars">★★★<span class="off">★★</span></span></td>
+            <td><strong>Ch3 / Ch6 / Ch11</strong></td>
+            <td>云信任前提认知、日志监控响应、终端 MDM——重要但不需深挖每个细节</td>
+          </tr>
+          <tr>
+            <td><span class="stars">★★<span class="off">★★★</span></span></td>
+            <td><strong>Ch1 / Ch12 / 附录</strong></td>
+            <td>背景故事、物理安全、标准对照表——按需查阅即可</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="callout tip">
+      <span class="ico">◆</span>
+      <div>
+        <p><strong>如果时间只够读三章</strong>：Ch2（为什么做）→ Ch5（怎么守门）→ Ch10（怎么控流量）。
+        这三章构成了「方法 → 入口 → 流量」的完整闭环，其余章节都是在这条主线上补细节。</p>
+      </div>
+    </div>
+
+    <div class="section-title" id="chapters">章节笔记</div>
+    <div class="ch-list">
+      <a class="ch-item ready" href="notes/ch02-frameworks.html">
+        <span class="idx">02</span>
+        <span class="body">
+          <span class="t">安全框架与行业最佳实践</span>
+          <span class="d">框架 vs 标准、网络保险的真相、安全是团队运动、9 大关键主题</span>
+        </span>
+        <span class="tail">
+          <span class="stars">★★★★★</span>
+          <span class="badge-ready">已上线</span>
+        </span>
+      </a>
+
+      <a class="ch-item soon">
+        <span class="idx">03</span>
+        <span class="body">
+          <span class="t">Meraki Dashboard 与云信任</span>
+          <span class="d">PaaS 架构优势、数据隐私与合规、软硬件信任模型</span>
+        </span>
+        <span class="tail"><span class="stars">★★★<span class="off">★★</span></span><span class="badge-soon">待更新</span></span>
+      </a>
+
+      <a class="ch-item soon">
+        <span class="idx">04</span>
+        <span class="body">
+          <span class="t">基于角色的访问控制（RBAC）</span>
+          <span class="d">组织/网络/设备三级角色、标签作用域、MDM 受限角色</span>
+        </span>
+        <span class="tail"><span class="stars">★★★★<span class="off">★</span></span><span class="badge-soon">待更新</span></span>
+      </a>
+
+      <a class="ch-item ready" href="notes/ch05-admin-access-details.html">
+        <span class="idx">05</span>
+        <span class="body">
+          <span class="t">管理员访问：技术细节与实战案例</span>
+          <span class="d">配置清单总表、默认值 vs 推荐值、四个翻车现场、技术细节颗粒度边界</span>
+        </span>
+        <span class="tail">
+          <span class="stars">★★★★★</span>
+          <span class="badge-ready">已上线</span>
+        </span>
+      </a>
+
+      <a class="ch-item soon">
+        <span class="idx">06</span>
+        <span class="body">
+          <span class="t">安全运营</span>
+          <span class="d">日志类型、只读防篡改、告警、API 与 SIEM 集成、事件响应</span>
+        </span>
+        <span class="tail"><span class="stars">★★★<span class="off">★★</span></span><span class="badge-soon">待更新</span></span>
+      </a>
+
+      <a class="ch-item soon">
+        <span class="idx">07</span>
+        <span class="body">
+          <span class="t">用户认证</span>
+          <span class="d">RADIUS、Cisco ISE、Duo、MAB、零信任入门</span>
+        </span>
+        <span class="tail"><span class="stars">★★★★<span class="off">★</span></span><span class="badge-soon">待更新</span></span>
+      </a>
+
+      <a class="ch-item soon">
+        <span class="idx">08</span>
+        <span class="body">
+          <span class="t">有线与无线 LAN 安全</span>
+          <span class="d">802.1X、端口安全、二层防火墙、无线隔离</span>
+        </span>
+        <span class="tail"><span class="stars">★★★★<span class="off">★</span></span><span class="badge-soon">待更新</span></span>
+      </a>
+
+      <a class="ch-item soon">
+        <span class="idx">09</span>
+        <span class="body">
+          <span class="t">MX 与 WAN 安全</span>
+          <span class="d">Auto VPN、站点到站点、vMX、AWS 云组网</span>
+        </span>
+        <span class="tail"><span class="stars">★★★★<span class="off">★</span></span><span class="badge-soon">待更新</span></span>
+      </a>
+
+      <a class="ch-item soon">
+        <span class="idx">10</span>
+        <span class="body">
+          <span class="t">用户流量安全</span>
+          <span class="d">URL 过滤、IDS/IPS、AMP、Secure Connect、CASB、DLP</span>
+        </span>
+        <span class="tail"><span class="stars">★★★★★</span><span class="badge-soon">待更新</span></span>
+      </a>
+
+      <a class="ch-item soon">
+        <span class="idx">11</span>
+        <span class="body">
+          <span class="t">终端设备安全</span>
+          <span class="d">Systems Manager、设备合规、应用与内容管控</span>
+        </span>
+        <span class="tail"><span class="stars">★★★<span class="off">★★</span></span><span class="badge-soon">待更新</span></span>
+      </a>
+
+      <a class="ch-item soon">
+        <span class="idx">12</span>
+        <span class="body">
+          <span class="t">物理安全</span>
+          <span class="d">MV 智能摄像头、视频墙、分析能力</span>
+        </span>
+        <span class="tail"><span class="stars">★★<span class="off">★★★</span></span><span class="badge-soon">待更新</span></span>
+      </a>
+    </div>
+
+    <div class="callout info" style="max-width:810px">
+      <span class="ico">i</span>
+      <div>
+        <p>笔记按<strong>「核心概念 → 易考点 → 实操要点 → 记忆口诀」</strong>四段式组织，
+        可直接当作复习材料。星星代表投入产出比，不是章节篇幅。</p>
+      </div>
+    </div>
+
+    <footer>
+      <p>Cisco Meraki 企业网络安全 · 中文精读笔记<br>
+      基于《Securing Enterprise Networks with Cisco Meraki》整理 · 仅供学习参考</p>
+    </footer>
+  </main>
+</div>
+
+<div id="overlay"></div>
+<script src="assets/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ch6 安全运营 · Ch7 用户认证 · 技术细节</title>
+<meta name="description" content="Meraki 三类日志与保留期、API/Syslog/NetFlow/SNMP 参数；四种用户认证方案对比、ISE 前置条件、AD 证书要求。">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<div id="progress"></div>
+
+<header class="topbar">
+  <button class="menu-btn" aria-label="打开目录">☰</button>
+  <a class="brand" href="../index.html">
+    <span class="dot"></span>
+    Meraki 安全精读
+    <small>Securing Enterprise Networks</small>
+  </a>
+  <span class="topbar-spacer"></span>
+  <a class="topbar-link hide-sm" href="../index.html#importance">重要度地图</a>
+  <a class="topbar-link" href="../index.html#chapters">章节</a>
+</header>
+
+<div class="layout">
+  <nav class="sidebar">
+    <div class="side-group-title">笔记目录</div>
+    <a href="../index.html"><span class="num">00</span>重要度地图</a>
+    <a href="tech-details.html"><span class="num">★</span>技术细节 · 索引</a>
+    <a href="tech-ch06-ch07.html"><span class="num">06/07</span>安全运营 · 用户认证</a>
+    <a href="tech-ch08-ch09.html"><span class="num">08/09</span>LAN · WAN 安全</a>
+    <a href="tech-ch10-ch12.html"><span class="num">10–12</span>流量 · 终端 · 物理</a>
+    <a href="ch02-frameworks.html"><span class="num">02</span>安全框架与最佳实践</a>
+    <a href="ch05-admin-access-details.html"><span class="num">05</span>管理员访问 · 实战篇</a>
+  </nav>
+
+  <main>
+  <article class="content">
+
+    <div class="chapter-head">
+      <div class="eyebrow">技术细节 · 第 6–7 章</div>
+      <h1>安全运营 与 用户认证</h1>
+      <p class="subtitle">
+        Ch6 解决「出了事能不能查清」；Ch7 解决「谁能进网络」。两章合起来对应九大主题里的
+        日志、监控响应、零信任与强认证。
+      </p>
+      <div class="meta-row">
+        <span class="chip strong">配置级</span>
+        <span class="chip">含页码</span>
+        <span class="chip">Ch6 p.195–287 / Ch7 p.287–384</span>
+      </div>
+    </div>
+
+    <!-- ============ Ch6 ============ -->
+    <h2>Ch6 · 安全运营</h2>
+
+    <h3>6.1 三类内置日志（对比表）</h3>
+
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>日志</th><th>记录什么</th><th>保留期</th><th>入口 / API</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><strong>Login attempts</strong></td>
+            <td>成功与失败登录，<strong>含 SAML 登录</strong>；支持按关键字/IP 过滤，兼容 IPv6</td>
+            <td><strong>全球统一 14 个月</strong></td>
+            <td><code>Organization &gt; Login Attempts</code>（Monitor）</td>
+          </tr>
+          <tr>
+            <td><strong>Change log</strong></td>
+            <td>时间、操作人、Dashboard 位置、变更项、<strong>新旧值</strong>；含 API 发起的变更</td>
+            <td><strong>EU 12 个月 / 其他 24 个月</strong></td>
+            <td>可按 Time/Admin/Network/SSID/Page 排序；支持多条件搜索（空格分隔、不区分大小写），<strong>但不能搜时间与日期</strong></td>
+          </tr>
+          <tr>
+            <td><strong>Event log</strong></td>
+            <td>设备事件；<strong>不记录管理员登录</strong></td>
+            <td><strong>全球 12 个月</strong></td>
+            <td>API <code>getNetworkEvents</code>；<code>Download As</code> 导出 CSV；<strong>仅能按时间排序</strong></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="callout warn">
+      <span class="ico">▲</span>
+      <div>
+        <p><strong>合规关键点：</strong>所有日志<strong>只读</strong>，无法通过 Dashboard 或 API 修改删除；<strong>日志无法关闭</strong>；
+        唯一可配置项是<strong>时区</strong>。唯一例外：EU 区域实例支持 GDPR 数据删除。</p>
+        <p style="margin-bottom:0">采用<strong>保留期</strong>而非容量上限，全部日志至少 12 个月 → 满足 <strong>PCI DSS 10.5.1</strong>。
+        三类日志在创建组织后<strong>默认开启，无需配置</strong>（p.196–201）。</p>
+      </div>
+    </div>
+
+    <h3>6.2 时间同步与时区</h3>
+    <ul>
+      <li>Meraki Cloud <strong>自动 NTP 同步</strong>，无需自建 NTP → 直接满足 <strong>PCI DSS 10.6.1</strong>（p.196）</li>
+      <li>默认时区 <code>America – Los Angeles (UTC -7.0 DST)</code>；路径 <code>Network-wide &gt; General &gt; Local Time Zone</code></li>
+      <li><strong>时区不能在组织级设置</strong>，多网络建议用 <strong>Configuration Templates</strong> 统一</li>
+      <li>易错：Change log / Login attempts 页面默认显示 <strong>UTC / GMT</strong>，Event log 用网络时区（p.197）</li>
+    </ul>
+
+    <h3>6.3 API 使用规则</h3>
+    <ul>
+      <li>启用：<code>Organization &gt; Settings &gt; Dashboard API Access</code> 勾选对应项</li>
+      <li>生成：<code>Organization &gt; API &amp; Webhooks &gt; Generate API Key</code>；<strong>明文只显示一次</strong></li>
+      <li>密钥<strong>绑定用户账号</strong>；<strong>SAML 用户无法生成 API 密钥</strong></li>
+      <li>最佳实践：用<strong>独立只读账号</strong>生成密钥，不用于日常管理，该邮箱<strong>不要加入其他组织</strong></li>
+      <li><strong>Syslog 在网络级配置</strong>（建议入模板），API 密钥是组织级一次配置；Syslog 由设备直接发，API 日志从云端拉</li>
+      <li>Organization ID 显示在每个 Dashboard 页面底部</li>
+    </ul>
+
+    <h3>6.4 Syslog</h3>
+    <div class="table-wrap">
+      <table>
+        <tbody>
+          <tr><td><strong>端口</strong></td><td><strong>UDP 514</strong></td></tr>
+          <tr><td><strong>路径</strong></td><td><code>Network-wide &gt; General &gt; Reporting</code>（非 Combined 网络在 Logging 段）→ <code>Add a Syslog Server</code>；<strong>必须至少选一个 Role</strong></td></tr>
+          <tr><td><strong>Role</strong></td><td>URL、Flows、Event logs（细分 appliance / switch / wireless）、Security events（AMP 拦截、IDS 触发）、Air Marshal events（rogue AP）</td></tr>
+          <tr><td><strong>Flows 细粒度</strong></td><td>可按防火墙规则<strong>逐条开关</strong>：勾选 <code>Security &amp; SD-WAN &gt; Firewall</code> 的 Syslog 列</td></tr>
+          <tr><td><strong>坑</strong></td><td>经 AutoVPN 传输若被出站防火墙拦截，需在 <code>Site-to-Site VPN &gt; Organization-wide Settings &gt; Add a Rule</code> 放行</td></tr>
+          <tr><td><strong>缺陷</strong></td><td>Flows <strong>不记录不经防火墙的会话</strong>（如同交换机下两台终端互访），不如 NetFlow 完整</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>6.5 NetFlow 与 ETA</h3>
+    <ul>
+      <li>NetFlow 最新 <strong>v9</strong>；<strong>IPFIX</strong> 基于 NetFlow，由 IETF 标准化</li>
+      <li>支持矩阵：<strong>MS390、Catalyst 9300-M/9300L-M/9300X-M</strong> 支持 v9 与 IPFIX（IPv4/IPv6）；<strong>MX / Z 仅支持 v9</strong></li>
+      <li><strong>ETA（加密流量分析）</strong>仅 MS390 与 Catalyst 9300-M 系列（需 UADP ASIC）</li>
+      <li>由<strong>设备直接发出</strong>（不经云），<strong>无需配置 NAT 或防火墙规则</strong></li>
+      <li>配置：<code>Network-wide &gt; General &gt; Reporting</code> → <code>Enabled: Send NetFlow Traffic Statistics</code>；填 Collector IP + 端口（示例 UDP <strong>2055</strong>）；ETA 需单独填 ETA Collector Port</li>
+      <li>Cisco Telemetry Broker 可采集/转换 NetFlow v5/v9、IPFIX、VPC Flow Logs、NSG Flow Logs</li>
+    </ul>
+
+    <h3>6.6 告警通道</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>通道</th><th>参数与配置</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><strong>Webhook</strong></td>
+            <td>HTTPS POST 到唯一 URL；接收方可为 ServiceNow / Webex / PagerDuty / Jira。
+            配置 <code>Organization &gt; API &amp; Webhooks &gt; Add Webhook Receiver</code>（Name / URL / <strong>Shared Secret</strong>），
+            再到 <code>Network-wide &gt; Alerts</code> 的 Default Recipients 添加 <code>Webhook: [名称]</code></td>
+          </tr>
+          <tr>
+            <td><strong>SNMP trap</strong></td>
+            <td>支持 <strong>v2c</strong>（明文 community string）与 <strong>v3</strong>（SHA1 认证 + AES 加密）。
+            trap 源自 Meraki Cloud，需公网 IP；接收端口标准 <strong>162</strong>。<strong>官方推荐优先用 Webhook</strong>（443 更易放行）</td>
+          </tr>
+          <tr>
+            <td><strong>SNMP 轮询</strong></td>
+            <td>默认<strong>禁止</strong>从本地网段外发起，需 <code>Organization &gt; Settings &gt; SNMP</code> 白名单；
+            只支持 <code>get</code>，<strong>不能通过 SNMP 改配置</strong></td>
+          </tr>
+          <tr>
+            <td><strong>OID / 端点</strong></td>
+            <td>支持 <code>.1.3.6.1.2.1.1</code> 与 <code>.1.3.6.1.2.1</code> 下多数 OID；
+            云端另需 <code>MERAKI-CLOUD-CONTROLLER-MIB</code>；云端查询端点 <code>snmp.meraki.com:16100</code></td>
+          </tr>
+          <tr>
+            <td><strong>SNMP 踩坑</strong></td>
+            <td>v3 默认预选 SHA + AES128，但<strong>设备级轮询实测必须用 DES 作隐私协议，且认证与隐私密码相同</strong>；
+            还需在 Firewall 建入站规则放行 <strong>UDP 161</strong></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>6.7 SIEM 与合规分析</h3>
+    <ul>
+      <li><strong>Splunk</strong>：<code>Splunk Add-on for Cisco Meraki</code> 经 API 采集审计事件、设备状态、告警、变更、认证事件 → <strong>NIST 800-53 AU-6</strong>；Syslog 入库推荐 <code>Splunk Connect for Syslog</code>（splunkbase app 4740）；输入名<strong>不能含空格</strong>，audit 类输入回溯 7 天</li>
+      <li><strong>AlgoSec</strong>：覆盖 PCI DSS / ISO 27001 / NIST 800-53 / HIPAA / ASD-ISM；建议每日定时分析以留存变更历史</li>
+      <li><strong>ServiceNow</strong>：<code>Service Graph Connector for Meraki</code> v1.3.3，支持 Vancouver/Utah/Tokyo；默认导入<strong>全部组织</strong>，需按 Organization ID 过滤</li>
+      <li><strong>Security Center</strong>：<code>Organization &gt; Security Center</code> 汇总 IDS/IPS 与 AMP 事件，支持 Show This Signature/Network/Source Only 与 WHOIS</li>
+      <li><strong>Alerts 页面</strong>处于 early preview，需在 <code>Organization &gt; Early Access</code> Opt-in</li>
+      <li><strong>资产/固件清单</strong>：<code>Organization &gt; Inventory</code>（可导出 CSV）；<code>Firmware Upgrades &gt; Schedule Upgrades</code>，状态分 <strong>Good / Critical / Warning</strong></li>
+    </ul>
+
+    <!-- ============ Ch7 ============ -->
+    <h2>Ch7 · 用户认证</h2>
+
+    <h3>7.1 四种方案对比（Table 7-1）</h3>
+
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>方案</th><th>MFA</th><th>适用</th><th>硬限制</th><th>步数/难度</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><strong>Meraki Cloud Auth</strong></td><td>无</td>
+            <td>Guest Wi-Fi、小网络、家庭/实验室</td>
+            <td><strong>按接入方式分别配置</strong>（有线/无线/VPN 各一套）；<strong>只能配在网络级</strong>；密码由管理员生成并以邮件发送；<strong>802.1X 用户无法自助改密</strong>；不推荐企业</td>
+            <td>少 / 易</td>
+          </tr>
+          <tr>
+            <td><strong>SAML + Duo + Entra</strong></td><td>Cisco Duo（组策略）</td>
+            <td>各种规模，尤其已用 Entra</td>
+            <td><strong>仅支持 AnyConnect VPN</strong>，不支持有线/无线接入；不支持 Duo inline enrollment 之外……<strong>仅 SAML 支持 inline enrollment</strong></td>
+            <td>约 20 步（已有 SSO）/ 易</td>
+          </tr>
+          <tr>
+            <td><strong>RADIUS + ISE + Duo</strong></td><td>Cisco Duo</td>
+            <td>需最强控制（按时段限制、限制并发登录）、有线无线全要覆盖</td>
+            <td>配置量大；<strong>RADIUS 不支持 inline enrollment</strong>，用户须先手工/批量注册</td>
+            <td>约 60 步 / 中</td>
+          </tr>
+          <tr>
+            <td><strong>AD 直连</strong></td><td>无</td>
+            <td>已有 AD、有强 Microsoft 技能</td>
+            <td><strong>仅 MX 支持</strong>，MS/MR 接入策略不支持；缺 ISE 排障工具；需配证书；AD 必须位于 MX 本地子网或 VPN 远端子网</td>
+            <td>少 / 中（排障很难）</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="callout tip">
+      <span class="ico">◆</span>
+      <div>
+        <p><strong>书中的选型结论：</strong>① AnyConnect VPN → <strong>SAML + Duo</strong>（同一方案同时覆盖管理员与用户接入，且支持 inline enrollment）；
+        ② client VPN / 有线 / 无线 → <strong>RADIUS + ISE + 客户端证书</strong>作第二因子（p.381）。</p>
+      </div>
+    </div>
+
+    <h3>7.2 ISE 前置条件</h3>
+    <ul>
+      <li>ISE 版本 <strong>3.2 patch 1 或更高</strong>（示例 3.2.0.542 patch 1）；查版本 <code>Settings &gt; About ISE and Server</code></li>
+      <li>ISE 须能解析 AD 域名，并与 AD 及所有发 RADIUS 的设备 IP 可达</li>
+      <li>AD 需装 <strong>AD DS + DNS</strong>；健康检查：<code>dcdiag /test:dns /v /e /dnsbasic /dnsrecordregistration</code>（管理员权限，全部通过）</li>
+      <li>Duo Authentication Proxy 示例版本 <strong>6.2.0</strong>，可与 AD 同机</li>
+      <li>ISE 以虚机部署；自带 CA 且支持多种第三方 CA；硬件机型内置 TPM</li>
+    </ul>
+
+    <p><strong>DNS SRV 记录（Table 7-2）</strong>——创建时<strong>不指定端口</strong>会导致 ISE 的 Kerberos 检查失败：</p>
+
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>_kerberos/tcp</th><th>_ldap/tcp</th><th>_kpasswd/tcp</th><th>_gc/tcp</th><th>_kerberos/udp</th><th>_kpasswd/udp</th></tr></thead>
+        <tbody><tr><td>88</td><td>389</td><td>416</td><td>3268</td><td>88</td><td>416</td></tr></tbody>
+      </table>
+    </div>
+
+    <h3>7.3 RADIUS 与 NAD</h3>
+    <ul>
+      <li><strong>NAD 白名单机制</strong>：ISE 只接受已登记设备的 RADIUS 请求；MS / MR / MX 都是 NAD</li>
+      <li><strong>源 IP 判定（关键）</strong>：设备在未参与 site-to-site VPN 的 MX 之后 → 源 IP 是<strong>站点 MX 的公网 IP</strong>；MX 参与 S2S VPN → 用设备<strong>本地 IP</strong></li>
+      <li>NAD 的 <code>Name</code> <strong>不允许空格</strong>；IP 处可填网段 / 范围 / 多行 / <code>0.0.0.0/0</code></li>
+      <li>认证端口 <strong>1812</strong>；<code>IPSEC</code> 设 No；shared secret 必须与 Meraki 设备一致</li>
+      <li>授权默认动作为 <strong>deny</strong>，必须另建放行规则（默认 PermitAccess）</li>
+      <li>仅<strong>无线</strong>可在 Dashboard 内直接测 RADIUS，无需客户端；但至少需一台已配置 AP，且该 SSID 与相邻设备要有 L2 连通（通常要求 AP 与所连交换机同 VLAN）</li>
+    </ul>
+
+    <h3>7.4 Duo Authentication Proxy 参数</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>配置段</th><th>参数</th></tr></thead>
+        <tbody>
+          <tr><td><code>[ad_client]</code></td><td><code>host=</code>（AD IP）、<code>search_dn=</code>（如 <code>DC=lab,DC=local</code>）、<code>search_account_username=</code>、<code>search_account_password=</code></td></tr>
+          <tr><td><code>[radius_server_auto]</code></td><td><code>ikey=</code>、<code>skey=</code>、<code>api_host=</code>、<code>radius_ip_1=</code>（ISE IP）、<code>radius_secret_1=</code>、<code>failmode=</code>（<strong>safe</strong>=主认证成功即放行；<strong>secure</strong>=Duo 不可用时拒绝）、<code>client=ad_client</code>、<code>port=1812</code></td></tr>
+          <tr><td><code>[cloud]</code></td><td>AD Sync 的 <code>ikey=</code> / <code>skey=</code> / <code>api_host=</code> + 搜索账号</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>校验：Proxy Manager 点 Validate，SUMMARY 应显示 <strong>No issues detected</strong>。
+    可选但推荐：用 <code>authproxy_passwd.exe --whole-config</code> 加密配置里的密码（类比对 IOS 做 service password encryption）。</p>
+
+    <h3>7.5 AD 直连认证的证书要求（Table 7-3）</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>项</th><th>要求</th></tr></thead>
+        <tbody>
+          <tr><td>Subject</td><td>必须含 AD 服务器 <strong>FQDN</strong>，如 <code>CN=WIN-XXXX.lab.local</code></td></tr>
+          <tr><td>EKU（客户端认证）</td><td>OID <code>1.3.6.1.5.5.7.3.2</code></td></tr>
+          <tr><td>EKU（服务端认证）</td><td>OID <code>1.3.6.1.5.5.7.3.1</code></td></tr>
+          <tr><td>有效期</td><td>必须晚于当天（示例 +36 个月）</td></tr>
+          <tr><td>版本</td><td>X.509 <strong>v3</strong></td></tr>
+          <tr><td>公钥</td><td><strong>RSA 2048</strong>（<code>KeyAlgorithm='RSA'</code>、<code>KeyLength=2048</code>）</td></tr>
+          <tr><td>SAN</td><td>须含 <code>DNS Name=服务器FQDN</code>；Certreq 需用 CMC 格式 + <code>san:dns=</code></td></tr>
+          <tr><td>Key usage</td><td>Digital Signature + Key Encipherment</td></tr>
+          <tr><td>校验</td><td>证书须含<strong>私钥</strong>（显示 "You have a private key that corresponds to this certificate."）；还可用 <code>Network-wide &gt; Packet capture</code> 抓包后用 Wireshark 核对</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>AD 侧验证：<code>dsquery</code> 查用户；<code>ldp.exe</code> 中 <strong>3268</strong>（不加密）/ <strong>3269</strong>（加密）测试 Connect 与 Bind。</p>
+
+    <h3>7.6 本章最关键的限制清单</h3>
+    <ul>
+      <li><strong>Meraki Cloud 认证无法阻止账号共享</strong>，技术上没有手段，只能靠唯一 ID + 限制并发登录 + MFA + 定期改密</li>
+      <li><strong>RADIUS 不支持 Duo inline enrollment</strong> → RADIUS 场景必须让用户先完成 Duo 注册（可 Bulk Enroll Users，CSV 格式 <code>username1,email1</code>）</li>
+      <li><strong>SAML 目前只支持 AnyConnect VPN</strong>；RADIUS 同时支持 client VPN 与 AnyConnect</li>
+      <li><strong>AD 直连仅 MX 支持</strong>；且 LDAP 认证<strong>不向 Duo 传客户端 IP</strong>，基于 IP 的策略（授权网络、用户位置）全部失效</li>
+      <li>organization-wide RADIUS 目前<strong>只适用于有线</strong>，无线与 VPN 待后续版本</li>
+      <li>MX 端口级 802.1X <strong>仅支持</strong> MX64/65(W)、MX67/68(C/W)、Z3(C)，且必须在<strong>端口级</strong>配 RADIUS（组织级不适用）</li>
+      <li>PEAP 是<strong>单向信任</strong>（只 ISE 出证书）；EAP-TLS <strong>双向证书</strong></li>
+    </ul>
+
+    <div class="pager">
+      <a href="tech-details.html">
+        <span class="dir">上一页</span>
+        <span class="ttl">技术细节 · 索引</span>
+      </a>
+      <a class="next" href="tech-ch08-ch09.html">
+        <span class="dir">下一页</span>
+        <span class="ttl">Ch8 LAN · Ch9 WAN →</span>
+      </a>
+    </div>
+
+  </article>
+
+  <footer>
+    <p>Cisco Meraki 企业网络安全 · 中文精读笔记<br>
+    依据第 6 章（p.195–287）、第 7 章（p.287–384）</p>
+  </footer>
+  </main>
+</div>
+
+<div id="overlay"></div>
+<script src="../assets/app.js"></script>
+</body>
+</html>

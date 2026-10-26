@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ch8 LAN 安全 · Ch9 WAN 安全 · 技术细节</title>
+<meta name="description" content="Meraki 802.1X/MAB、SGT 与 Adaptive Policy、WPA3 算法参数、Air Marshal；Auto VPN 注册机制、IPsec 参数、AnyConnect、vMX 规格。">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<div id="progress"></div>
+
+<header class="topbar">
+  <button class="menu-btn" aria-label="打开目录">☰</button>
+  <a class="brand" href="../index.html">
+    <span class="dot"></span>
+    Meraki 安全精读
+    <small>Securing Enterprise Networks</small>
+  </a>
+  <span class="topbar-spacer"></span>
+  <a class="topbar-link hide-sm" href="../index.html#importance">重要度地图</a>
+  <a class="topbar-link" href="../index.html#chapters">章节</a>
+</header>
+
+<div class="layout">
+  <nav class="sidebar">
+    <div class="side-group-title">笔记目录</div>
+    <a href="../index.html"><span class="num">00</span>重要度地图</a>
+    <a href="tech-details.html"><span class="num">★</span>技术细节 · 索引</a>
+    <a href="tech-ch06-ch07.html"><span class="num">06/07</span>安全运营 · 用户认证</a>
+    <a href="tech-ch08-ch09.html"><span class="num">08/09</span>LAN · WAN 安全</a>
+    <a href="tech-ch10-ch12.html"><span class="num">10–12</span>流量 · 终端 · 物理</a>
+    <a href="ch02-frameworks.html"><span class="num">02</span>安全框架与最佳实践</a>
+    <a href="ch05-admin-access-details.html"><span class="num">05</span>管理员访问 · 实战篇</a>
+  </nav>
+
+  <main>
+  <article class="content">
+
+    <div class="chapter-head">
+      <div class="eyebrow">技术细节 · 第 8–9 章</div>
+      <h1>LAN 安全 与 WAN 安全</h1>
+      <p class="subtitle">
+        Ch8 解决「内部横向移动」——分段与接入控制；Ch9 解决「链路与远程接入」——加密与 VPN。
+        两章合起来对应九大主题里的分段、加密与控制措施。
+      </p>
+      <div class="meta-row">
+        <span class="chip strong">配置级</span>
+        <span class="chip">含算法参数</span>
+        <span class="chip">Ch8 p.384–527 / Ch9 p.527–591</span>
+      </div>
+    </div>
+
+    <!-- ============ Ch8 ============ -->
+    <h2>Ch8 · LAN 安全</h2>
+
+    <h3>8.1 SGT 与 Adaptive Policy（微隔离）</h3>
+
+    <p>SGT（Security Group Tag，思科文档也叫 scalable group tag）用于标识流量并执行安全策略，
+    类比 QoS 标记或 MPLS 标签：<strong>靠近源打标</strong>，逐跳按标签查表，而不是逐包全量检查。
+    SGT 封装在 IP header 内，以 <strong>Cisco MetaData (CMD)</strong> 为 EtherType（p.492）。</p>
+
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>项</th><th>要求</th></tr></thead>
+        <tbody>
+          <tr><td><strong>前提</strong></td><td>全部网络基础设施都必须支持 SGT，且所有设备至少需 <strong>advanced license</strong></td></tr>
+          <tr><td><strong>无线支持</strong></td><td>所有 Wi-Fi 5 Wave 2 / Wi-Fi 6 / Wi-Fi 6E 的 MR 与 CW AP，固件 <strong>MR27+</strong></td></tr>
+          <tr><td><strong>交换机支持</strong></td><td>MS390 需 MS14.33.1+；C9300-M 需 CS15.21.1+；C9300/L/X-M 需 CS16.7+</td></tr>
+          <tr><td><strong>安全设备</strong></td><td>MX / Z3+，含所有可运行 <strong>MX18.1+</strong> 的机型；<strong>MX84 因硬件限制不支持</strong></td></tr>
+          <tr><td><strong>SGT 取值</strong></td><td><strong>1 – 65,519</strong>，但<strong>排除 2</strong>（保留给 Infrastructure）</td></tr>
+          <tr><td><strong>与 ISE 关系</strong></td><td>可从 ISE <strong>单向同步</strong>（SGT + 策略 + SGACL）；纯 Meraki 网络不需要 ISE；混合网络建议集成</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p><strong>启用与传播（三个开关都是手工的）</strong>：</p>
+    <ol>
+      <li>启用：<code>Organization &gt; Adaptive Policy</code> → <code>Networks</code> 标签 → 勾选 <code>Adaptive Policy Disabled</code> 的网络 → <code>Enable</code>。启用后交换机端口才会出现 peer SGT / adaptive policy group 配置项</li>
+      <li>MS 端口：<code>Switching &gt; Switch Ports</code>（Monitor）→ 选中接 AP/MS/MX 的端口 → <code>Edit</code> → <code>Peer SGT Capable = Enabled</code>，<code>Adaptive Policy Group</code> 选 <strong>2: Infrastructure</strong></li>
+      <li>MX 侧：<code>Security &amp; SD-WAN &gt; Site-to-Site VPN &gt; VPN Settings</code> → <code>Peer SGT Capable = Enabled</code>；LAN 口须是 <strong>trunk</strong> 且 <code>LAN Setting</code> 为 <code>VLANs</code>。MX 固件 <strong>18.210+</strong> 会额外显示 <code>Adaptive Policy</code> 下拉，也要选 <strong>2: Infrastructure</strong></li>
+    </ol>
+
+    <div class="callout warn">
+      <span class="ico">▲</span>
+      <div>
+        <p>MX 可通过 Auto VPN 在 WAN 上保留并传递 SGT，<strong>前提是 MX 处于 Routed 模式</strong>（默认）。
+        但 <strong>SGT 在 LAN 端口与 VPN 上的传播默认未启用</strong>，必须手工打开。</p>
+      </div>
+    </div>
+
+    <p><strong>打标方式与策略</strong>：</p>
+    <ul>
+      <li>静态：SSID（<code>Wireless &gt; Access Control</code> → <code>Client IP and VLAN</code> 段）或交换机 access 端口</li>
+      <li>动态：通过 RADIUS 属性下发，常用于 802.1X（用 ISE 直接下发 SGT，同时覆盖有线与无线）</li>
+      <li>策略：<code>Organization-wide &gt; Adaptive Policy &gt; Policies</code> → <code>Add Policies</code>，选 Source / Destination Groups 后点 <strong>Deny</strong></li>
+      <li>执行点在 <strong>egress 侧</strong>；<strong>默认允许所有流量</strong>；规则基于 SGT 而非 IP 地址</li>
+      <li>配置层级差异：<strong>adaptive policies 在组织级</strong>，group policies 在网络级</li>
+    </ul>
+
+    <h3>8.2 无线安全参数</h3>
+
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>WPA3 要素</th><th>算法 / 参数</th></tr></thead>
+        <tbody>
+          <tr><td>认证</td><td>EAP-TLS + <strong>ECDH</strong> 交换 + <strong>ECDSA</strong>，<strong>384-bit 椭圆曲线</strong></td></tr>
+          <tr><td>加密</td><td><strong>256-bit GCMP-256</strong>（Galois/Counter Mode Protocol）</td></tr>
+          <tr><td>密钥派生与确认</td><td><strong>384-bit HMAC-SHA384</strong></td></tr>
+          <tr><td>管理帧保护</td><td><strong>256-bit BIP-GMAC-256</strong></td></tr>
+          <tr><td>硬件前提</td><td>AP 至少 802.11ac Wave-2，且能运行 <strong>MR 27+</strong></td></tr>
+          <tr><td>配置路径</td><td><code>Wireless &gt; Access Control</code> → <code>WPA Encryption</code>（支持 WPA3 192-bit security）</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>8.3 Air Marshal（无线 IPS）</h3>
+    <ul>
+      <li>合规依据：<strong>PCI DSS 4.0 req 11.2.1</strong> 要求定期侦测并区分授权/非授权 AP 并告警（p.521）</li>
+      <li>可告警：接入网络的 <strong>rogue AP</strong>、伪造我方 SSID/AP 的设备、恶意广播与包洪泛</li>
+      <li><strong>默认启用</strong>（本书少见的默认开着的安全功能）；路径 <code>Wireless &gt; Air Marshal</code>（Monitor）</li>
+      <li>建议部署<strong>带专用扫描射频</strong>的 AP；无专用射频的 AP 必须短暂 <strong>off-channel</strong>（停止服务客户端）才能扫描</li>
+      <li>RF 控制：<code>Wireless &gt; Radio Settings</code> 用 RF profiles 定制信号；对应 <strong>NIST 800-53 AC-18(5)</strong>（限制边界外无线使用、可校准发射功率）</li>
+    </ul>
+
+    <h3>8.4 Ch8 限制清单（高频踩坑）</h3>
+    <ul>
+      <li><strong>MR 上被非默认 L3 规则放行的流，不会再次与 L7 规则比对</strong>（与 MX 行为不同，p.389）</li>
+      <li>通过 L7 规则封 HTTPS <strong>不显示 block page</strong>；需要阻断页面请用 Secure Connect（p.391）</li>
+      <li>ACL <strong>对本网络内所有交换机生效</strong>，无法只对单台交换机生效（p.385）</li>
+      <li>Port isolation <strong>仅本地交换机生效</strong>，且 <strong>uplink 端口不得启用</strong>（p.400）</li>
+      <li>DAI 的 <strong>trusted 端口必须先配好，再全局启用</strong>（p.405）</li>
+      <li>本地状态页即使被禁用，<strong>通过物理管理口仍可访问</strong>（p.413）</li>
+      <li><strong>Sentry Wi-Fi 仅在 SSID 用 Meraki Cloud Authentication 时可用</strong>（p.448）</li>
+      <li>MAB 应<strong>仅作最后手段</strong>，MAC 易被伪造；<strong>iOS 默认 Private Wi-Fi Address 会让 MAC 变化</strong>，导致 MAB 与手工 group policy 失效（p.458 / p.469）</li>
+      <li>Adaptive Policy Group <strong>只能赋给启用了 RADIUS 的 SSID</strong>（即已配 PEAP 或 EAP-TLS）（p.504）</li>
+      <li><strong>SGT 执行不支持在 MX 本身上进行</strong>，建议所有客户端接交换机或 AP（p.510）</li>
+    </ul>
+
+    <!-- ============ Ch9 ============ -->
+    <h2>Ch9 · WAN 安全</h2>
+
+    <h3>9.1 Auto VPN 的工作机制</h3>
+
+    <p>行为<strong>最接近 DMVPN</strong>，但依赖 Meraki Cloud 的 <strong>VPN Registry</strong>（p.528）：</p>
+
+    <ol>
+      <li>MX 通过 <strong>NexTunnel 上的 TCP 443</strong> 加密会话发送 <strong>Register Request</strong>（含自身 IP 与 UDP 端口）</li>
+      <li>VPN Registry 在 <strong>Register Response</strong> 中下发对端联络信息 + <strong>两个 16 字符密钥</strong>（每个方向一个）</li>
+      <li>双方用这些信息建立隧道</li>
+    </ol>
+
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>拓扑要素</th><th>行为</th></tr></thead>
+        <tbody>
+          <tr><td>支持的拓扑</td><td>mesh、hub-and-spoke 或混合</td></tr>
+          <tr><td><strong>hub 之间</strong></td><td><strong>自动形成全互联</strong></td></tr>
+          <tr><td><strong>spoke</strong></td><td>只与 hub 建隧道；<strong>spoke 间流量经 hub 中转</strong></td></tr>
+          <tr><td>扩展性建议</td><td>用专用 MX 作 hub 并配 <strong>VPN Concentrator 模式</strong>（<code>Security &amp; SD-WAN &gt; Addressing &amp; VLANs</code>），采用 hub-and-spoke 减少隧道数</td></tr>
+          <tr><td>站点类型</td><td><strong>Hub (Mesh)</strong>；<strong>Exit hub</strong> 用于全互联拓扑作默认网关；Spoke 需勾 <strong>IPv4 Default Route</strong> 才能经 hub 上外网</td></tr>
+          <tr><td>验证路径</td><td><code>Security &amp; SD-WAN &gt; VPN Status</code>（Monitor）悬停 Description 看时延与用量；<code>Exported Subnets</code> 确认发布网段；<code>Appliance Status &gt; Tools &gt; Ping</code></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>9.2 非 Meraki 对端（第三方 IPsec）</h3>
+
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>项</th><th>默认参数 / 限制</th></tr></thead>
+        <tbody>
+          <tr><td>认证方式</td><td><strong>仅支持预共享密钥，不支持证书</strong></td></tr>
+          <tr><td>端口要求</td><td>本地与远端之间 <strong>UDP 500 与 4500</strong> 必须可达</td></tr>
+          <tr><td><strong>Phase 1（IKE）</strong></td><td><strong>3DES / SHA1 / DH Group 2 / 生存期 8 小时</strong></td></tr>
+          <tr><td><strong>Phase 2（IPsec）</strong></td><td><strong>3DES 或 AES + MD5 或 SHA1 / PFS 关闭 / 生存期 8 小时</strong></td></tr>
+          <tr><td>Local ID</td><td>留空（默认）时使用 MX 的<strong>上行链路 IP</strong>，而非公网 IP</td></tr>
+          <tr><td>Private Subnets</td><td>可填 <code>0.0.0.0/0</code> 表示全部；<code>Availability</code> 默认 All Networks（可用 Tags 限制）</td></tr>
+          <tr><td><strong>组织级作用域</strong></td><td>非 Meraki 对端是<strong>组织级</strong>配置，多个 MX 连同一对端<strong>共用同一 shared secret</strong></td></tr>
+          <tr><td>VPN 方向</td><td>站点间出站规则<strong>对所有 VPN 对端生效</strong>；要拒绝某网段须把它填在 <strong>Source</strong></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>9.3 Client VPN vs AnyConnect（Table 9-1）</h3>
+
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>维度</th><th>Client VPN</th><th>AnyConnect</th></tr></thead>
+        <tbody>
+          <tr><td>协议</td><td><strong>L2TP / IPsec</strong></td><td><strong>TLS / DTLS</strong></td></tr>
+          <tr><td>加密</td><td>Phase 1：3DES + SHA1；Phase 2：<strong>AES-128 / 3DES</strong> + SHA1</td><td><strong>AES-256</strong> 与 3DES-168</td></tr>
+          <tr><td>SAML 支持</td><td>否</td><td><strong>是</strong></td></tr>
+          <tr><td>Split tunnel / NVM</td><td><strong>不支持</strong></td><td><strong>支持</strong></td></tr>
+          <tr><td>许可</td><td>任意 MX 许可即可</td><td>需额外 <strong>AnyConnect 许可</strong></td></tr>
+          <tr><td>客户端</td><td>macOS / iOS / iPadOS <strong>原生</strong></td><td>需 Cisco Secure Client</td></tr>
+          <tr><td>型号/固件</td><td>—</td><td>支持所有当前 MX（含 vMX），<strong>最低固件 16.16</strong>；MX64(W)/65(W) 需 <strong>17.6+</strong></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p><strong>Client VPN 细节</strong>：路径 <code>Security &amp; SD-WAN &gt; Client VPN &gt; IPsec Settings</code>；
+    Hostname 由 Meraki 动态 DNS 自动生成；DNS 可选 <code>Use Umbrella</code> 或 <code>Specify Nameservers</code>；
+    Shared Secret <strong>不要以特殊字符开头或结尾</strong>；认证支持 Meraki Cloud / RADIUS / AD，<strong>推荐 RADIUS</strong>。</p>
+
+    <p><strong>AnyConnect 细节</strong>：端口默认 <strong>443</strong>；证书认证需 CA 为 <strong>PEM 格式</strong>（默认 Disabled）；
+    RADIUS 端口 <strong>1812</strong>；IPv6 Prefix 需 <strong>MX 18.104+</strong>；
+    Profile 通过 <strong>XML</strong>（Secure Client Profile Editor 生成）下发，可配 always-on VPN、登录前启动、备用服务器列表；
+    <strong>Session Timeout 默认 None</strong>，可选 8 小时 / 1 天 / 7 天 / Custom（以小时计，<strong>最大 256 小时</strong>）。</p>
+
+    <h3>9.4 限制 VPN 访问的五种方式</h3>
+    <ol class="keypoints">
+      <li>Client Routing（只让指定网段走 VPN）</li>
+      <li>Default Group Policy</li>
+      <li>RADIUS <strong>Filter-ID</strong></li>
+      <li>Sentry 策略（<code>Network-wide &gt; Group Policies</code>）</li>
+      <li>出站 L3 防火墙规则（<code>Security &amp; SD-WAN &gt; Firewall</code>，源填本地 VPN 子网）</li>
+    </ol>
+
+    <h3>9.5 vMX 规格与限制</h3>
+
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>规格</th><th>吞吐</th><th>隧道数</th><th>AWS 实例</th></tr></thead>
+        <tbody>
+          <tr><td>Small</td><td>200 Mbps</td><td>50</td><td><code>c5.large</code></td></tr>
+          <tr><td>Medium</td><td>500 Mbps</td><td>250</td><td><code>c5.large</code></td></tr>
+          <tr><td>Large</td><td>1 Gbps</td><td>1,000</td><td><code>c5.xlarge</code></td></tr>
+          <tr><td>X-Large</td><td>10 Gbps</td><td>10,000</td><td><code>c6in.2xlarge</code></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="callout warn">
+      <span class="ico">▲</span>
+      <div>
+        <p><strong>vMX 不支持：</strong>AMP、IDS/IPS、Geo-IP Layer 7 防火墙规则、802.1X Port Auth、splash page、双 WAN/LAN 端口。
+        <strong>X-Large 额外限制</strong>：仅支持 Passthrough 或 VPN Concentrator 模式，且无 Client VPN / AnyConnect / BGP / OSPF / NAT 模式。</p>
+        <p style="margin-bottom:0">平台支持 AWS / Azure / GCP / Alibaba Cloud / Cisco NFVIS，<strong>不支持 VMware</strong>。
+        AWS 部署须把 ENI 的 <strong>Source/Dest. Check 关闭</strong>，认证令牌 <strong>1 小时内失效</strong>。</p>
+      </div>
+    </div>
+
+    <h3>9.6 其他 Ch9 事实</h3>
+    <ul>
+      <li><strong>Auto VPN 会同时在主/备 WAN 建隧道</strong>；非 Meraki VPN <strong>仅用主用 Internet 上行</strong>（p.537）</li>
+      <li><strong>AnyConnect 不能与 NAT exceptions（No NAT）同时启用</strong>在同一 WAN 上行，且<strong>不支持蜂窝接口</strong>（需加 MG 网关并设 IP Passthrough）（p.552）</li>
+      <li><strong>Sentry VPN</strong> 经 Systems Manager 推送配置，认证方式<strong>必须是 Meraki Cloud Authentication</strong>，<strong>仅支持 Client VPN 不支持 AnyConnect</strong>（p.548）</li>
+      <li>断开远程访问的手段：关闭 Client VPN Server、在 <code>Network-wide &gt; Users</code> 停用账号、或在 Clients 页把 Policy 设为 <strong>Block List</strong> 后 Apply Policy（p.547）</li>
+      <li><strong>Internet Outages</strong>：覆盖 24 小时窗口、每分钟更新，可切 Last 15/30/60 分钟；需 Meraki Insight 或 Secure SD-WAN Plus 许可（p.539）</li>
+    </ul>
+
+    <div class="pager">
+      <a href="tech-ch06-ch07.html">
+        <span class="dir">上一页</span>
+        <span class="ttl">Ch6 安全运营 · Ch7 用户认证</span>
+      </a>
+      <a class="next" href="tech-ch10-ch12.html">
+        <span class="dir">下一页</span>
+        <span class="ttl">Ch10–12 流量 · 终端 · 物理 →</span>
+      </a>
+    </div>
+
+  </article>
+
+  <footer>
+    <p>Cisco Meraki 企业网络安全 · 中文精读笔记<br>
+    依据第 8 章（p.384–527）、第 9 章（p.527–591）</p>
+  </footer>
+  </main>
+</div>
+
+<div id="overlay"></div>
+<script src="../assets/app.js"></script>
+</body>
+</html>

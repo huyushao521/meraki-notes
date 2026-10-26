@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>技术细节总库 · 索引与跨章汇总 · Meraki 安全精读</title>
+<meta name="description" content="Cisco Meraki 安全全书技术细节速查索引：合规条款编号汇总、默认值与推荐值对照、限制与坑总表。">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<div id="progress"></div>
+
+<header class="topbar">
+  <button class="menu-btn" aria-label="打开目录">☰</button>
+  <a class="brand" href="../index.html">
+    <span class="dot"></span>
+    Meraki 安全精读
+    <small>Securing Enterprise Networks</small>
+  </a>
+  <span class="topbar-spacer"></span>
+  <a class="topbar-link hide-sm" href="../index.html#importance">重要度地图</a>
+  <a class="topbar-link" href="../index.html#chapters">章节</a>
+</header>
+
+<div class="layout">
+  <nav class="sidebar">
+    <div class="side-group-title">笔记目录</div>
+    <a href="../index.html"><span class="num">00</span>重要度地图</a>
+    <a href="tech-details.html"><span class="num">★</span>技术细节 · 索引</a>
+    <a href="tech-ch06-ch07.html"><span class="num">06/07</span>安全运营 · 用户认证</a>
+    <a href="tech-ch08-ch09.html"><span class="num">08/09</span>LAN · WAN 安全</a>
+    <a href="tech-ch10-ch12.html"><span class="num">10–12</span>流量 · 终端 · 物理</a>
+    <a href="ch02-frameworks.html"><span class="num">02</span>安全框架与最佳实践</a>
+    <a href="ch05-admin-access-details.html"><span class="num">05</span>管理员访问 · 实战篇</a>
+  </nav>
+
+  <main>
+  <article class="content">
+
+    <div class="chapter-head">
+      <div class="eyebrow">速查手册 · 总索引</div>
+      <h1>技术细节总库</h1>
+      <p class="subtitle">
+        把全书 12 章里散落的「配置级 + 合规条款级」细节抽出来，按章归档、按条款汇总。
+        每条都标了原书页码，方便回查原文。
+      </p>
+      <div class="meta-row">
+        <span class="chip strong">速查用</span>
+        <span class="chip">配置级</span>
+        <span class="chip">含条款编号</span>
+        <span class="chip">含页码溯源</span>
+      </div>
+    </div>
+
+    <div class="callout info">
+      <span class="ico">i</span>
+      <div>
+        <p><strong>颗粒度说明：</strong>本页只记录「书上真实写了的路径、默认值、参数、条款号」，
+        不含推测。作者在 Note / Tip / Warning 里点出的坑，单独汇总在下方。</p>
+        <p style="margin-bottom:0">这是总索引页；分章细节见三个子页。</p>
+      </div>
+    </div>
+
+    <h2>分章技术细节</h2>
+
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>页面</th><th>覆盖内容</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><a href="tech-ch06-ch07.html"><strong>Ch6 安全运营 + Ch7 用户认证</strong></a></td>
+            <td>三类日志与保留期、API 与 Syslog、NetFlow/ETA、SNMP/Webhook、SIEM 集成；<br>
+            四种认证方案对比（含配置步数与难度）、ISE 前置条件与 SRV 记录、NAD 源 IP 判定、Duo 代理参数、AD 证书要求</td>
+          </tr>
+          <tr>
+            <td><a href="tech-ch08-ch09.html"><strong>Ch8 LAN 安全 + Ch9 WAN 安全</strong></a></td>
+            <td>802.1X/MAB、端口防护（DAI、port isolation）、SGT 与 Adaptive Policy、WPA3 算法参数、Air Marshal；<br>
+            Auto VPN 注册机制、IPsec 默认参数、Client VPN vs AnyConnect、vMX 规格矩阵</td>
+          </tr>
+          <tr>
+            <td><a href="tech-ch10-ch12.html"><strong>Ch10 流量安全 + Ch11 终端 + Ch12 物理</strong></a></td>
+            <td>Secure Connect 执行顺序与凭据、Cloud Firewall/IPS、SWG 文件检查与宏阻断、CASB/DLP；<br>
+            Systems Manager 配置载荷、MV 摄像头与 MT 传感器联动、视频导出校验</td>
+          </tr>
+          <tr>
+            <td><a href="ch05-admin-access-details.html"><strong>Ch5 管理员访问</strong></a></td>
+            <td>密码四件套完整参数、闲置超时的取值范围、IP 白名单输入格式、MFA 两级控制、SAML 四个关键配置项 + 四个实战案例</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2 id="compliance">一、合规条款速查（跨章汇总）</h2>
+
+    <p>这是全书最有「考试价值」的一张表——把散在各章的条款号集中起来，反过来也能当自查清单用。</p>
+
+    <h3>PCI DSS 4.0</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>条款</th><th>要求</th><th>Meraki 落地</th></tr></thead>
+        <tbody>
+          <tr><td><strong>1.2.4</strong></td><td>实时图形化流量视图</td><td>NetFlow / ETA（p.220）</td></tr>
+          <tr><td><strong>1.5.1</strong></td><td>终端安全相关控制</td><td>Systems Manager 合规策略（p.738）</td></tr>
+          <tr><td><strong>3.4.2</strong></td><td>防止卡号被未授权转移</td><td>CASB 应用管控 + DLP（p.690）</td></tr>
+          <tr><td><strong>4.2.1</strong></td><td>传输中强加密，<strong>不得回退到不安全算法/密钥长度</strong></td><td>Auto VPN / IPsec（p.527）</td></tr>
+          <tr><td><strong>4.2.1.2</strong></td><td>无线认证与传输使用强加密</td><td>WPA3（p.520）</td></tr>
+          <tr><td><strong>8.2</strong></td><td>唯一用户 ID；会话闲置 <strong>15 分钟</strong>重新认证</td><td>独立管理员账号 + Idle Timeout（p.101）</td></tr>
+          <tr><td><strong>8.3.4</strong></td><td>连续失败登录锁定账户</td><td>Account Lockout，建议 10 次</td></tr>
+          <tr><td><strong>8.3.5</strong></td><td>避免默认密码、避免密码明文经邮件传递</td><td>Add Admin 邮件验证 + 自设密码流程</td></tr>
+          <tr><td><strong>8.3.10.1</strong></td><td>无 MFA 时密码 <strong>90 天</strong>过期</td><td>Password Age（p.95）</td></tr>
+          <tr><td><strong>10.5.1</strong></td><td>日志保留至少 <strong>12 个月</strong></td><td>三类日志按保留期存储（p.197）</td></tr>
+          <tr><td><strong>10.6.1</strong></td><td>时间同步机制</td><td>Meraki Cloud 自动 NTP（p.196）</td></tr>
+          <tr><td><strong>11.2.1</strong></td><td>定期侦测并区分授权/非授权无线 AP 并告警</td><td>Air Marshal（p.521）</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>NIST 800-53 / CSF 2.0</h3>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>控制项</th><th>要求</th><th>落地</th></tr></thead>
+        <tbody>
+          <tr><td><strong>AC-4</strong> / <strong>AC-4(4)</strong></td><td>检视信息流；具备检视<strong>加密流量</strong>的能力</td><td>HTTPS Inspection、DLP（p.617、p.696）</td></tr>
+          <tr><td><strong>AC-7</strong> / <strong>AC-7(2)</strong></td><td>失败认证达上限即锁定</td><td>Account Lockout（p.96）</td></tr>
+          <tr><td><strong>AC-11</strong></td><td>会话锁定</td><td>Idle Timeout（p.101）</td></tr>
+          <tr><td><strong>AC-18(5)</strong></td><td>限制边界外无线通信的非授权使用，含调节发射功率</td><td>RF Profiles + 定向天线（p.522）</td></tr>
+          <tr><td><strong>AC-19</strong></td><td>移动设备访问控制</td><td>Systems Manager（p.742）</td></tr>
+          <tr><td><strong>AU-6</strong></td><td>审计记录评审与分析</td><td>Splunk Add-on 采集审计事件（p.207）</td></tr>
+          <tr><td><strong>IA-2</strong></td><td>访问网络前唯一识别并认证用户</td><td>RADIUS / SAML / 802.1X（p.287）</td></tr>
+          <tr><td><strong>PR.DS-02</strong></td><td>保护传输中数据的机密性/完整性/可用性</td><td>Auto VPNIPsec（p.527）</td></tr>
+          <tr><td><strong>DE.CM-03</strong></td><td>监控人员活动与异常</td><td>Systems Manager（p.735）</td></tr>
+          <tr><td><strong>DE.CM-06</strong></td><td>监控外部服务提供商的负面事件</td><td>ThousandEyes / Internet Outages（p.539）</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>其他标准</h3>
+    <ul>
+      <li><strong>Essential Eight</strong>：唯一明确要求 <strong>IP 白名单</strong>的框架（p.103）；要求阻断<strong>宏文件</strong>（.docm/.xlsm/.dotm，p.682）；要求阻断<strong>网络广告</strong>（p.665）；文件检查与沙箱（p.656）</li>
+      <li><strong>HIPAA</strong>：保护电子受保护健康信息（ePHI）的机密性、完整性、可用性；<strong>PHI 应从 HTTPS inspection 中排除</strong>（p.676）</li>
+      <li><strong>GDPR</strong>：保护 EU 公民个人数据，<strong>具有域外效力</strong>；EU 区域 Meraki 实例支持数据删除例外（p.196）</li>
+      <li><strong>ISO 27001 / SOC 2</strong>：在附录 A 的 Table A-1 中与上述标准并列映射到本书章节</li>
+    </ul>
+
+    <h2 id="defaults">二、默认值 vs 推荐值（必须改的那些）</h2>
+
+    <div class="callout warn">
+      <span class="ico">▲</span>
+      <div>
+        <p>这张表的意义：<strong>下面每一条的「默认值」都是不安全的</strong>。审计最常抓的就是这些还停在默认状态的项。</p>
+      </div>
+    </div>
+
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>功能</th><th>默认</th><th>应改为</th><th>位置</th></tr></thead>
+        <tbody>
+          <tr><td>密码时效</td><td>禁用（永不过期）</td><td>90 天</td><td>Organization &gt; Settings</td></tr>
+          <tr><td>强密码</td><td>不启用</td><td>启用</td><td>Organization &gt; Settings</td></tr>
+          <tr><td>账户锁定</td><td>不启用</td><td>10 次</td><td>Organization &gt; Settings</td></tr>
+          <tr><td>闲置超时</td><td>禁用</td><td>15 分钟</td><td>Organization &gt; Settings</td></tr>
+          <tr><td>IP 白名单</td><td>禁用（全球可登录）</td><td>3～10 个子网</td><td>Organization &gt; Settings</td></tr>
+          <tr><td>MFA 强制</td><td>不强制</td><td>全员强制</td><td>Organization &gt; Settings</td></tr>
+          <tr><td>SAML SSO</td><td>未启用</td><td>启用（IdP + SP 双向）</td><td>Organization &gt; Administrators</td></tr>
+          <tr><td>Adaptive Policy</td><td>按网络禁用</td><td>需要的网络启用</td><td>Organization &gt; Adaptive Policy</td></tr>
+          <tr><td>SGT 在 LAN/VPN 传播</td><td>未启用</td><td>手工开启</td><td>端口设置 / Site-to-Site VPN</td></tr>
+          <tr><td>Cloud Firewall IPS</td><td>不启用</td><td>Protection 模式</td><td>Secure Connect &gt; Cloud Firewall</td></tr>
+          <tr><td>SSL Decryption</td><td>未启用</td><td>按需启用（需装 Root CA）</td><td>Secure Connect &gt; DNS</td></tr>
+          <tr><td>File Inspection</td><td>关闭</td><td>开启</td><td>Web Policy &gt; Ruleset Settings</td></tr>
+          <tr><td>Air Marshal</td><td><strong>默认启用</strong>（少见的例外）</td><td>保持启用</td><td>Wireless &gt; Air Marshal</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2 id="traps">三、坑与限制总表（作者明确警告的）</h2>
+
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>章</th><th>限制 / 坑</th><th>页</th></tr></thead>
+        <tbody>
+          <tr><td>Ch5</td><td>IP 白名单一旦把自己锁在外面<strong>极难撤销</strong>；Dashboard 强制包含当前 IP 只防手滑，防不了 ISP 变更</td><td>104</td></tr>
+          <tr><td>Ch5</td><td>MFA 全局强制<strong>必须先有 ≥1 个账户启用</strong>，否则报错；建议准备 ≥2 个可用账户</td><td>122</td></tr>
+          <tr><td>Ch5</td><td>MFA <strong>不影响 API 访问</strong>；关掉全局策略不等于关掉某个人的 2FA</td><td>121</td></tr>
+          <tr><td>Ch5</td><td>Dashboard 的 IP 白名单<strong>只对本地账户生效</strong>，SAML 场景须在 IdP/Duo 侧再配</td><td>104</td></tr>
+          <tr><td>Ch6</td><td>Change log 与 Login attempts 默认显示 <strong>UTC/GMT</strong>，Event log 用网络时区——跨日志关联要注意</td><td>197</td></tr>
+          <tr><td>Ch6</td><td>Syslog Flows <strong>不记录不经防火墙的会话</strong>，不如 NetFlow 完整</td><td>223</td></tr>
+          <tr><td>Ch6</td><td>SNMP v3 设备级轮询<strong>实测必须用 DES 且认证/隐私密码相同</strong></td><td>269</td></tr>
+          <tr><td>Ch6</td><td><strong>SAML 用户无法生成 API 密钥</strong></td><td>201</td></tr>
+          <tr><td>Ch7</td><td>Meraki Cloud 认证<strong>不能阻止账号共享</strong>，只能靠唯一 ID + 限制并发登录 + MFA 治理</td><td>290</td></tr>
+          <tr><td>Ch7</td><td><strong>RADIUS 不支持 Duo inline enrollment</strong>，用户必须先手工注册（可批量）</td><td>362</td></tr>
+          <tr><td>Ch7</td><td>AD 直连认证<strong>仅 MX 支持</strong>，MS/MR 接入策略不支持；且 AD 必须位于 MX 本地子网或 VPN 远端子网</td><td>373</td></tr>
+          <tr><td>Ch7</td><td>AD 认证下 LDAP <strong>不向 Duo 传递客户端 IP</strong>，基于 IP 的策略全部失效</td><td>373</td></tr>
+          <tr><td>Ch7</td><td>organization-wide RADIUS <strong>目前只适用于有线</strong>，无线与 VPN 待后续版本</td><td>326</td></tr>
+          <tr><td>Ch7</td><td>MX 端口级 802.1X <strong>仅支持</strong> MX64/65(W)、MX67/68(C/W)、Z3(C)</td><td>342</td></tr>
+          <tr><td>Ch8</td><td>MR 上被非默认 L3 规则放行的流<strong>不会再次与 L7 规则比对</strong>（与 MX 行为不同）</td><td>389</td></tr>
+          <tr><td>Ch8</td><td>通过 L7 规则封 HTTPS <strong>不显示 block page</strong>，需要阻断页面时用 Secure Connect</td><td>391</td></tr>
+          <tr><td>Ch8</td><td>ACL <strong>对本网络内所有交换机生效</strong>，无法只对单台交换机生效</td><td>385</td></tr>
+          <tr><td>Ch8</td><td>Port isolation <strong>仅本地交换机生效</strong>，且 uplink 端口不得启用</td><td>400</td></tr>
+          <tr><td>Ch8</td><td>DAI 的 <strong>trusted 端口必须先配好再全局启用</strong></td><td>405</td></tr>
+          <tr><td>Ch8</td><td>MAB 应<strong>仅作最后手段</strong>，MAC 地址易被伪造；iOS 默认 Private Wi-Fi Address 会让 MAB 失效</td><td>458 / 469</td></tr>
+          <tr><td>Ch8</td><td>SGT 执行<strong>不支持在 MX 本身上进行</strong>；MX84 因硬件限制不支持；SGT 取值范围 1–65,519 但<strong>排除 2</strong>（保留给 Infrastructure）</td><td>510 / 492 / 499</td></tr>
+          <tr><td>Ch8</td><td>Adaptive Policy Group <strong>只能赋给启用了 RADIUS 的 SSID</strong>；SGT 需全部基础设施支持且至少 advanced license</td><td>504 / 492</td></tr>
+          <tr><td>Ch9</td><td>Auto VPN 会<strong>同时在主/备 WAN 建隧道</strong>，非 Meraki VPN <strong>仅用主用上行</strong></td><td>537</td></tr>
+          <tr><td>Ch9</td><td>非 Meraki 对端<strong>仅支持预共享密钥，不支持证书</strong>；UDP 500/4500 必须可达</td><td>533</td></tr>
+          <tr><td>Ch9</td><td>非 Meraki VPN 对端是<strong>组织级作用域</strong>，多个 MX 连同一对端共用同一 shared secret</td><td>533</td></tr>
+          <tr><td>Ch9</td><td><strong>AnyConnect 不能与 NAT exceptions 同时启用</strong>在同一 WAN 上行；不支持蜂窝接口</td><td>552</td></tr>
+          <tr><td>Ch9</td><td>vMX <strong>不支持 AMP、IDS/IPS、Geo-IP L7 规则、802.1X</strong>；X-Large 还无 Client VPN/AnyConnect/BGP/OSPF/NAT 模式</td><td>564</td></tr>
+          <tr><td>Ch10</td><td>三组 API 凭据<strong>只显示一次</strong>；填错要去 License &amp; API Keys 点 Replace API Credentials，<strong>接错 Umbrella 组织只能开 case</strong></td><td>623 / 629</td></tr>
+          <tr><td>Ch10</td><td>File Type Control <strong>只能在 Web Policy 用，且依赖 HTTPS inspection</strong>；不要勾 Documents 总复选框（会阻断全部文档）</td><td>682 / 684</td></tr>
+          <tr><td>Ch10</td><td>Secure Malware Analytics 的<strong>沙箱区域（NA/EU）一旦选定不可更改</strong></td><td>674</td></tr>
+          <tr><td>Ch10</td><td>Cloud Firewall 阻断网站只会静默丢弃并显示 "page cannot be displayed"，<strong>要友好阻断页必须用 Web Policy</strong></td><td>648</td></tr>
+          <tr><td>Ch10</td><td>新建 Web Policy 规则<strong>默认呈灰色未启用</strong>，必须手动 ENABLE RULE</td><td>661</td></tr>
+          <tr><td>Ch12</td><td>MV 视频导出文件带 <strong>SHA256 校验值</strong>，可用于证明未篡改（chain of custody）</td><td>762</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2 id="gaps">四、书中未涉及的内容（避免误引）</h2>
+
+    <p>为了不让你拿错资料，这里明确列出「通读后确认书里没有」的项：</p>
+
+    <ul>
+      <li><strong>协议机理层</strong>：SAML 断言的 XML 字段结构与签名算法、802.1X 的 EAP 报文交互、RADIUS 属性编码、IPS 签名匹配引擎原理、证书链校验过程</li>
+      <li><strong>Ch8 未涉及</strong>：BPDU Guard、风暴控制（Storm Control）配置、CoA（RFC 5176）、WIDS/WIPS 缩写（书中只用 Meraki 的 "Air Marshal wireless IPS"）、DHCP Snooping 独立配置步骤</li>
+      <li><strong>Ch9 未涉及</strong>：DS-Lite、双 WAN failover 配置步骤、上行链路丢包阈值、SD-WAN 流量策略（SD-Internet）配置、SafeSearch 强制与 YouTube 限制模式</li>
+      <li><strong>Ch10 未涉及</strong>：Umbrella SIG 隧道配置（改用 Secure Connect 后不再需要 IPsec 隧道）</li>
+      <li><strong>Ch11 未涉及</strong>：SentinelOne / CrowdStrike / Meraki Trusted Access 字样（第三方信任只写 <strong>Cisco Duo Trusted Endpoints</strong>）；远程擦除/锁定的 Dashboard 操作路径</li>
+      <li><strong>Ch12 未涉及</strong>：门禁/ACS 系统集成、MT 型号命名（MT10/MT20 等）、温湿度精度数值、摄像头默认密码策略</li>
+    </ul>
+
+    <div class="callout tip">
+      <span class="ico">◆</span>
+      <div>
+        <p><strong>结论：</strong>这本书是「怎么配 + 为什么这么配 + 对应哪条合规」，
+        <strong>不是</strong>「协议怎么跑」。要深入协议层，需要再配 Cisco 官方文档与 RFC。</p>
+      </div>
+    </div>
+
+    <div class="pager">
+      <a href="ch02-frameworks.html">
+        <span class="dir">上一页</span>
+        <span class="ttl">Ch2 安全框架与行业最佳实践</span>
+      </a>
+      <a class="next" href="tech-ch06-ch07.html">
+        <span class="dir">下一页</span>
+        <span class="ttl">Ch6 安全运营 · Ch7 用户认证 →</span>
+      </a>
+    </div>
+
+  </article>
+
+  <footer>
+    <p>Cisco Meraki 企业网络安全 · 中文精读笔记<br>
+    技术细节依据《Securing Enterprise Networks with Cisco Meraki》全书 · 页码对应原书 PDF</p>
+  </footer>
+  </main>
+</div>
+
+<div id="overlay"></div>
+<script src="../assets/app.js"></script>
+</body>
+</html>
