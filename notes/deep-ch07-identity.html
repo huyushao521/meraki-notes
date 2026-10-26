@@ -1,0 +1,508 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ch7 身份与认证：机制拆解 | Meraki 安全精读</title>
+<meta name="description" content="第 7 章深度精读：Meraki 四种用户认证路径的能力边界、802.1X 全链路机制、PEAP 与 EAP-TLS 的本质差异、ISE 默认拒绝的授权模型，以及面试可用的原理表述。">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<div id="progress"></div>
+
+<header class="topbar">
+  <button class="menu-btn" aria-label="打开目录">☰</button>
+  <a class="brand" href="../index.html">
+    <span class="dot"></span>
+    Meraki 安全精读
+    <small>Securing Enterprise Networks</small>
+  </a>
+  <span class="topbar-spacer"></span>
+  <a class="topbar-link hide-sm" href="deep-ch08-lan.html">下一章 Ch8</a>
+  <a class="topbar-link" href="../index.html#chapters">章节</a>
+</header>
+
+<div class="layout">
+
+  <nav class="sidebar">
+    <div class="side-group-title">深度精读</div>
+    <a href="../index.html"><span class="num">00</span>总览与路线</a>
+    <a class="active" href="deep-ch07-identity.html"><span class="num">07</span>身份与认证</a>
+    <a href="deep-ch08-lan.html"><span class="num">08</span>LAN 分段与准入</a>
+    <a href="deep-ch09-wan.html"><span class="num">09</span>WAN 与 Auto VPN</a>
+    <a href="deep-ch10-traffic.html"><span class="num">10</span>流量安全与 SASE</a>
+    <div class="side-group-title">细节与背景</div>
+    <a href="tech-details.html"><span class="num">★</span>参数总库</a>
+    <a href="ch02-frameworks.html"><span class="num">02</span>安全框架</a>
+    <a href="ch05-admin-access-details.html"><span class="num">05</span>管理员访问</a>
+    <a href="tech-ch06-ch07.html"><span class="num">6-7</span>细节清单</a>
+    <a href="tech-ch08-ch09.html"><span class="num">8-9</span>细节清单</a>
+    <a href="tech-ch10-ch12.html"><span class="num">10-12</span>细节清单</a>
+  </nav>
+
+  <main>
+  <article class="content">
+
+    <div class="chapter-head">
+      <div class="eyebrow">第 7 章 · 深度精读</div>
+      <h1>身份与认证：用户凭什么能进网络</h1>
+      <p class="subtitle">
+        这一章解决的不只是「怎么配一个 SSID」，而是四条认证路径的能力边界：
+        Meraki Cloud Auth、AD 直连、RADIUS + ISE、SAML + Duo。
+        书里的结论很明确——企业环境别自己造轮子，把判断交给 ISE，把第二因素交给 Duo。
+      </p>
+      <div class="meta-row">
+        <span class="chip strong">技术密度：极高</span>
+        <span class="chip">含书中实验全流程</span>
+        <span class="chip">面试高频：802.1X / PEAP / SAML</span>
+      </div>
+    </div>
+
+    <div class="callout info">
+      <span class="ico">i</span>
+      <div>
+        <p><strong>标注约定：</strong>标 <code>（p.xx）</code> 的是书中原文位置；
+        标 <code>（推论）</code> 的是我根据书中机制推出来、书里没有明说的内容，用来把链路补完整。
+        书中未涉及的部分我会直接写「书中未涉及」，不做补全式编造。</p>
+      </div>
+    </div>
+
+    <h2>一、设计理念：为什么是这四条路</h2>
+
+    <p>
+      Meraki 在认证上的设计思路不是「给一个万能方案」，而是把认证拆成<strong>四个能力层级</strong>，
+      每层解决不同规模的问题，代价也逐层上升。理解这个阶梯，比记住某个 SSID 怎么点更有用。
+    </p>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>方案</th><th>解决什么</th><th>覆盖范围</th><th>关键代价</th><th>书中定位</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>Meraki Cloud Authentication</strong></td>
+            <td>管理员即用户，开箱可用</td>
+            <td>wired / wireless / VPN 各自独立配置</td>
+            <td>只能网络级配置；密码由管理员生成并以邮件明文发送；802.1X 用户无法自助改密</td>
+            <td>只适合家庭、小型企业或 lab；企业强烈建议换外部 IdP（p.290-291）</td>
+          </tr>
+          <tr>
+            <td><strong>Active Directory 直连</strong></td>
+            <td>复用已有域账号与组</td>
+            <td><strong>仅 MX</strong>，不适用于 MS / MR 的 access policy</td>
+            <td>缺 ISE 的排障工具；证书配置对新手棘手；LDAP 不把客户端 IP 传给 Duo</td>
+            <td>「感觉只是为了支持传统遗留部署而存在」（p.289、p.373）</td>
+          </tr>
+          <tr>
+            <td><strong>RADIUS + Cisco ISE</strong></td>
+            <td>802.1X 准入、按身份授权、SGT 下发</td>
+            <td>wired / wireless / VPN 全接入方式</td>
+            <td>需维护 ISE；需 PKI（用 EAP-TLS 时）；organization-wide RADIUS 目前只支持 wired</td>
+            <td>企业标配，技术难度最高的需求必须上 ISE（p.290、p.326）</td>
+          </tr>
+          <tr>
+            <td><strong>SAML + Duo</strong></td>
+            <td>把认证委派给云 IdP，顺带拿到 MFA</td>
+            <td><strong>仅 AnyConnect VPN</strong>；不支持 IPsec client VPN，不支持 802.1X</td>
+            <td>覆盖范围窄；RADIUS 路径没有 inline enrollment，用户要事先注册</td>
+            <td>需要同时满足 SAML 与 RADIUS 时，ISE 和 Duo 一起上（p.290、p.295）</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>1.1 为什么 SAML 只覆盖 AnyConnect VPN</h3>
+
+    <p>
+      这是最容易被误解的一点。直觉上「SAML 更现代，为什么不用它做 802.1X」，
+      但 SAML 断言解决的是「这个用户是谁」，而 802.1X 需要的远不止身份：
+      端口级的 Accept/Reject、授权结果下发（VLAN / SGT / ACL）、会话中途的 <code>CoA</code> 变更、
+      计费审计——这些是 RADIUS 协议族的职责，SAML 断言给不了。
+    </p>
+
+    <p>
+      所以 Meraki 的边界划得很清楚：<strong>SAML 管「人进 VPN」和「管理员进 Dashboard」，
+      RADIUS 管「设备进端口/进 SSID」</strong>（p.295、p.346）。两者在同一个组织里并存，不是二选一。
+    </p>
+
+    <h3>1.2 为什么 ISE 是这套体系的「大脑」</h3>
+
+    <p>
+      书里给 ISE 的定位是 IAM / 策略引擎，具体承担三件事（p.290）：
+    </p>
+    <ul>
+      <li><strong>MFA</strong>——作为 RADIUS 服务器串联 Duo，把第二因素塞进 802.1X 流程</li>
+      <li><strong>授权与策略下发</strong>——分配 SGT、ACL，决定认证通过后给什么权限</li>
+      <li><strong>充当 CA</strong>——签发客户端证书，这是 EAP-TLS 能落地的前提</li>
+    </ul>
+    <p>
+      反过来说，「按时间段限制访问」「限制并发登录」这类需求的技术难度最高，
+      只有 ISE 的授权策略引擎能做（p.290）。这就是为什么企业规模的答案不是「Meraki 自带功能再配一配」。
+    </p>
+
+    <h3>1.3 Duo 不只是 MFA</h3>
+
+    <p>
+      书里特别澄清了一个概念（p.290）：Duo 在 SAML 场景里之所以能当 IdP，是因为
+      <strong>Duo Single Sign-On 本身就是 cloud-hosted SAML 2.0 identity provider</strong>，
+      MFA 只是它的一项能力。这一点决定了它才能支持 <em>Duo inline enrollment</em>——
+      用户在首次登录流程里直接完成注册，而不是管理员事后发邮件批量导入。
+    </p>
+
+    <div class="callout warn">
+      <span class="ico">!</span>
+      <div>
+        <p><strong>同一个 Duo，两种接入方式的体验完全不同：</strong>
+        SAML 路径有 inline enrollment；RADIUS 路径没有，用户必须事先注册——
+        要么逐个点 <code>Send Enrollment Email</code>，要么用 <code>Bulk Enroll Users</code> 导入 CSV（p.289、p.362）。
+        这是选 SAML 而不是 RADIUS 做 VPN 的一个实际理由。</p>
+      </div>
+    </div>
+
+    <h2>二、机制拆解：802.1X 在 Meraki 上实际怎么跑</h2>
+
+    <h3>2.1 三段链路，各段用什么协议</h3>
+
+    <p>
+      书里的链路是三段（p.325、p.341、p.343）：
+      <strong>supplicant（客户端）→ Meraki MS/MR/MX（authenticator，ISE 眼里叫 NAD）→ 企业 RADIUS（ISE）→ AD</strong>。
+      客户端与 Meraki 设备之间跑的是 <code>EAP</code>（封装在 802.1X 的 EAPoL 帧里），
+      Meraki 设备与 ISE 之间把 EAP 载荷封进 <strong>RADIUS</strong> 报文。
+    </p>
+
+    <p>
+      Meraki 侧需要配的只有三项：<strong>RADIUS 服务器 IP/FQDN、Port 1812、shared secret</strong>（p.325）。
+      ISE 侧则要反过来把 Meraki 设备登记为 <strong>NAD（network access device）</strong>，
+      登记源 IP 或子网并配置同一个 shared secret，且 <code>IPSEC</code> 选项必须设为 <code>No</code>（p.315、p.317）。
+    </p>
+
+    <div class="callout tip">
+      <span class="ico">◆</span>
+      <div>
+        <p><strong>ISE 的 NAD 列表本质是一张白名单：</strong>只有登记过的设备发来的 RADIUS 请求才会被处理。
+        所以 802.1X「配了但不通」，第一件事不是看证书，而是看 ISE 里那台设备的源 IP 登记对不对。</p>
+      </div>
+    </div>
+
+    <h3>2.2 关键细节：RADIUS 源 IP 取决于拓扑</h3>
+
+    <p>
+      这是本章最有工程价值的一条，也是面试里能立刻区分「配过」和「背过」的点（p.315-316）：
+    </p>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>设备所处的拓扑</th><th>发出的 RADIUS 源 IP</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>MS / MR 位于<strong>不参与</strong> site-to-site VPN 的 MX 之后</td><td>该 MX 的<strong>公网 IP</strong></td></tr>
+          <tr><td>MS / MR <strong>参与</strong> site-to-site VPN</td><td>Meraki 设备的<strong>本地 IP</strong></td></tr>
+          <tr><td>MX 自身做 802.1X</td><td>通常是它的 <strong>Internet 接口地址</strong></td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>
+      <strong>（推论）</strong>这意味着同一个组织的不同站点，可能需要在 ISE 里登记成完全不同的地址形态：
+      未上 VPN 的分支登记 MX 公网出口，开了 VPN 的分支登记内网段。
+      一旦拓扑变更（比如后来加了 Auto VPN），原来登记的公网 IP 立刻失效，认证静默失败。
+    </p>
+
+    <h3>2.3 PEAP 与 EAP-TLS：差在「谁证证明谁」</h3>
+
+    <p>
+      书里的定性就一句话，但信息量很足（p.325）：<strong>PEAP 是单向信任（one-way trust）</strong>，
+      ISE 用证书标识自己，客户端<strong>不需要证书</strong>；
+      而 <strong>EAP-TLS 同时使用客户端与服务器证书</strong>。
+    </p>
+
+    <p>
+      Cisco ISE 开箱即提供 PEAP 所需的服务器证书，这是它部署门槛低的直接原因（p.325）。
+      书中演示时，客户端侧只做了一件事：macOS 弹出 <code>Verify Certificate</code> 提示，点 <code>Continue</code> 接受 ISE 的证书（p.345）。
+    </p>
+
+    <div class="callout warn">
+      <span class="ico">!</span>
+      <div>
+        <p><strong>（推论）PEAP 的强度上限在哪：</strong>PEAP-MSCHAPv2 的内层只用 TLS 隧道保护用户名密码，
+        认证的本质仍然是「把域密码交出去验证」。也就是说，
+        能拿到用户密码的一方就能完成认证，服务器无法区分是不是本人在操作。
+        EAP-TLS 则要求客户端持有私钥，私钥不出设备、不可离线复制，这才是它更强的根本原因。</p>
+        <p style="margin-bottom:0">
+        <strong>书中未涉及</strong>PEAP 与 EAP-TLS 的具体握手包序与算法协商过程——这一层需要查 RFC 与 ISE 文档。</p>
+      </div>
+    </div>
+
+    <h3>2.4 ISE 的授权模型：默认就是拒绝</h3>
+
+    <p>
+      书中反复出现的一个细节：<strong>ISE 的默认授权策略是 deny</strong>，
+      所以建完 policy set 后必须<strong>显式插入授权规则</strong>才能放行——
+      条件是 AD 的 <code>ExternalGroups</code> 属于 <code>Network Access</code> 组，Profile 设为 <code>PermitAccess</code>（p.336、p.338）。
+    </p>
+
+    <p>
+      这条规则的价值在于：<strong>「认证通过」不等于「授权通过」</strong>。
+      用户密码对了只是第一步，还得命中一条授权策略才会被放行。
+      这正好对应最小权限原则——默认 deny，按组授予。
+    </p>
+
+    <h3>2.5 Duo 接在哪里，决定你能用哪些能力</h3>
+
+    <p>
+      书里明确指出 <strong>Duo Authentication Proxy 部署在认证链的哪个位置「有讲究」</strong>，
+      不同位置会影响可支持的特性，例如 <code>CoA</code>（p.346）。
+    </p>
+
+    <p>
+      RADIUS + MFA 的串联方式（p.346、p.367-373）：
+      Duo Authentication Proxy 接收 RADIUS 请求、查询 AD，并与 AD 同步用户与组；
+      ISE 把 Duo 配成 <code>External RADIUS Server</code>，
+      再用 <code>RADIUS Server Sequences</code> 把 policy set 的 Allowed Protocols 与 Server Sequence 指向 Duo（Proxy Sequence）。
+    </p>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>Duo <code>failmode</code></th><th>行为</th><th>取舍</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><code>safe</code></td><td>主认证成功即放行，不等 Duo 云</td><td>保可用性，牺牲第二因素（p.349）</td></tr>
+          <tr><td><code>secure</code></td><td>Duo Cloud 不可用时<strong>直接拒绝认证</strong></td><td>保安全，Duo 故障即全员登不上（p.349）</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>
+      这是一个典型的<strong>安全 vs 可用性</strong>决策点，没有标准答案，取决于业务能否接受「认证服务故障 = 全员断网」。
+    </p>
+
+    <h3>2.6 SAML 里 Meraki 是 SP，不是 IdP</h3>
+
+    <p>
+      书中 AnyConnect 的 SAML 流程是标准 SP 视角（p.295-299）：
+      把 Duo 提供的 <strong>SAML Metadata XML 上传到 Dashboard</strong>，
+      同时在 Duo 里填写 <strong>AnyConnect Server URL</strong>。
+      也就是说 Meraki 信任 Duo 签发的断言，自己不做身份判定。
+    </p>
+
+    <p><strong>书中未涉及</strong> IdP-initiated 与 SP-initiated 两种发起方式的差异。</p>
+
+    <h2>三、书中的实验（可当实操脚本）</h2>
+
+    <h3>3.1 SAML + Duo + Entra：三个组件怎么分工</h3>
+
+    <p>实验组成是 Meraki Dashboard 的 AnyConnect VPN + Cisco Duo（IdP 兼 MFA）+ Microsoft Entra（身份管理）（p.295-303）。步骤概括：</p>
+    <ol class="keypoints">
+      <li>在 Entra 中另建 <code>Network Access</code> 组——把「能连 VPN 的人」从「全公司」收窄成一个组</li>
+      <li>Duo 里 Protect <code>meraki secure</code> 应用，填入 AnyConnect Server URL</li>
+      <li>下载 Duo 的 SAML Metadata XML，上传到 Dashboard 的 AnyConnect 配置</li>
+      <li>在 Entra 的 Duo SSO 企业应用中分配该组，让组成员获得 SSO 资格</li>
+    </ol>
+    <p>
+      这四步的结构值得记住：<strong>身份源（Entra）决定谁有资格 → IdP（Duo）决定怎么验 → SP（Meraki）只负责信任</strong>。
+    </p>
+
+    <h3>3.2 无线 PEAP：不用客户端就能测</h3>
+
+    <p>
+      这是本章最实用的一个技巧（p.339-342）：<strong>无线 RADIUS 可以在 Dashboard 内直接测试</strong>，
+      不需要真实无线客户端。但有两个前提——SSID 必须具备 L2 连通性（AP 与交换机在同一 VLAN），
+      且 Dashboard 会<strong>逐个检查每台 AP 到 RADIUS 服务器的可达性</strong>。
+    </p>
+
+    <p>
+      后一点很关键：它把「某台 AP 认证失败」这类问题提前暴露成「这台 AP 到 ISE 不通」，
+      把排障从「认证问题」降级成「连通性问题」。
+    </p>
+
+    <h3>3.3 有线 802.1X：一条完整的成功链路</h3>
+
+    <p>
+      书里用 MX 的 LAN 口做验证（并注明生产环境应改用 MS 交换机）（p.342-346）：
+      Mac 侧用 iMazing 生成并推送 Profile，<code>EAP Setup Modes = Login Window</code>，
+      <code>Accepted EAP Types = PEAP</code>。
+    </p>
+
+    <p>
+      实测流程是三步：<strong>弹登录框 → 接受 ISE 服务器证书 → Dashboard event log 依次出现
+      「端口接入」「EAP 认证完成」「放行入网」</strong>。
+      事件日志把这个过程拆成可观测的三段，这正是排查 802.1X 时应该看的东西。
+    </p>
+
+    <h3>3.4 VPN + RADIUS + Duo + AD 四件套</h3>
+
+    <p>
+      实验拓扑是 Meraki MX 的 AnyConnect VPN + Cisco ISE（RADIUS server）+ Cisco Duo（MFA）+ Microsoft AD（身份管理），
+      书中注明与 AD 通信使用 <strong>LDAP</strong>（p.346-347）。
+    </p>
+
+    <div class="callout tip">
+      <span class="ico">◆</span>
+      <div>
+        <p><strong>驱动这套组合的现实原因：</strong>PCI DSS 从 3.2.1 升到 4.0 后，
+        要求<strong>所有</strong>远程访问都必须 MFA，不再只限于敏感区域（p.346）。
+        这条变化直接解释了为什么书里所有远程接入方案都默认带上 MFA。</p>
+      </div>
+    </div>
+
+    <h2>四、限制与坑（书里点名的）</h2>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>坑</th><th>具体表现</th><th>依据</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>MX 型号限制 802.1X</strong></td>
+            <td>仅 MX64/65(W)、MX67/68(C/W) 与 Z3(C) teleworker gateways 支持；不是所有 MX 都能做端口认证</td>
+            <td>p.342</td>
+          </tr>
+          <tr>
+            <td><strong>organization-wide RADIUS 只覆盖有线</strong></td>
+            <td>组织级定义一次的 RADIUS 服务器目前只能用于 wired；且 MX 上的 RADIUS 必须<strong>按端口</strong>配置，组织级配置在 MX 上不适用</td>
+            <td>p.326、p.343</td>
+          </tr>
+          <tr>
+            <td><strong>原生 SAML 只覆盖 AnyConnect</strong></td>
+            <td>不支持 Meraki IPsec client VPN，也不支持 802.1X（有线或无线）</td>
+            <td>p.295、p.346</td>
+          </tr>
+          <tr>
+            <td><strong>AD 直连只覆盖 MX</strong></td>
+            <td>不适用于 MS（wired）或 MR（wireless）的 access policies</td>
+            <td>p.289</td>
+          </tr>
+          <tr>
+            <td><strong>LDAP 不传客户端 IP</strong></td>
+            <td>原生 AD 认证场景下，基于 IP 的策略（授权网络、用户位置）在 Duo 侧<strong>完全失效</strong></td>
+            <td>p.373</td>
+          </tr>
+          <tr>
+            <td><strong>Duo Proxy 别和 AD 同机</strong></td>
+            <td>端口冲突；书中该部署类型的文档「明显缺失」</td>
+            <td>p.373</td>
+          </tr>
+          <tr>
+            <td><strong>Kerberos 测试失败</strong></td>
+            <td>AD 的 DNS SRV 记录（<code>_kerberos</code>、<code>_kpasswd</code>）创建时若不显式填端口，从 ISE 跑测试会失败</td>
+            <td>p.308</td>
+          </tr>
+          <tr>
+            <td><strong>Duo 应用设置</strong></td>
+            <td>Duo 的 Cisco ISE RADIUS 应用需把 <code>Username Normalization</code> 设为 <code>Simple</code></td>
+            <td>p.359</td>
+          </tr>
+          <tr>
+            <td><strong>AD 网络位置</strong></td>
+            <td>原生 AD 认证要求 AD 服务器位于 MX 同子网或 VPN 远端子网（可用静态路由绕过）</td>
+            <td>p.374</td>
+          </tr>
+          <tr>
+            <td><strong>Cloud Auth 的管理成本</strong></td>
+            <td>用户按 access method（wired/wireless/VPN）分别配置，且只能在 network 级配；多接入方式或多网络时管理成本极高</td>
+            <td>p.290</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2>五、面试问答：怎么把机制讲清楚</h2>
+
+    <p>
+      下面每个问题先给「一句话答案」，再给可以继续展开的支撑点。
+      一句话版本用来开场，支撑点用来接住追问。
+    </p>
+
+    <h3>Q1：802.1X 在 Meraki 上是怎么跑的？</h3>
+    <div class="card">
+      <p><strong>一句话：</strong>客户端（supplicant）与交换机/AP（authenticator，ISE 眼中的 NAD）跑 EAP，
+      authenticator 把凭据封进 RADIUS 送到 Cisco ISE，ISE 再回 AD 校验，
+      结果以 Accept/Reject 回给端口或 SSID（p.325）。</p>
+      <p style="margin-bottom:0"><strong>可展开：</strong>Meraki 侧只配 3 个参数（IP、1812、secret）；
+      ISE 侧要把 Meraki 设备登记为 NAD 且 <code>IPSEC=No</code>；
+      RADIUS 源 IP 随拓扑变化（VPN 内外不同）；ISE 默认 deny，认证通过后还要命中授权规则。</p>
+    </div>
+
+    <h3>Q2：PEAP 和 EAP-TLS 怎么选？为什么 PEAP 被认为更弱？</h3>
+    <div class="card">
+      <p><strong>一句话：</strong>PEAP 是单向信任，只有服务器用证书证明自己，客户端交用户名密码；
+      EAP-TLS 是双向证书，客户端必须持有私钥（p.325）。</p>
+      <p style="margin-bottom:0"><strong>可展开：</strong>PEAP 部署门槛低（ISE 开箱带证书、客户端零配置），
+      但强度等价于「谁能拿到域密码谁就能认证」；
+      EAP-TLS 私钥不出设备，所以更强，代价是要 PKI——书里的做法是用 ISE 当 CA 签发，
+      再由 Systems Manager 自动下发证书和 profile（p.429-446），把 PKI 成本压到最低。</p>
+    </div>
+
+    <h3>Q3：802.1X 配好了但不通，从哪查？</h3>
+    <div class="card">
+      <p><strong>一句话：</strong>先确认 ISE 里登记的那台 NAD 的源 IP 和实际发出报文的源 IP 是否一致（p.315-316）。</p>
+      <p style="margin-bottom:0"><strong>可展开：</strong>源 IP 取决于 MS/MR 是否在参与 VPN 的 MX 后面（公网 IP vs 本地 IP）；
+      其次是 shared secret 与 <code>IPSEC=No</code>；再往后才是授权规则（ISE 默认 deny，没有授权规则即使认证成功也不放行）；
+      最后看 event log 的三段——端口接入、EAP 认证完成、放行入网，哪一段没出现就定位在哪一段。</p>
+    </div>
+
+    <h3>Q4：SAML 和 RADIUS 什么时候用哪个？</h3>
+    <div class="card">
+      <p><strong>一句话：</strong>SAML 管「人进 VPN / 管理员进 Dashboard」，RADIUS 管「设备进端口或 SSID」；
+      原生 SAML 的覆盖范围只有 AnyConnect VPN（p.295、p.346）。</p>
+      <p style="margin-bottom:0"><strong>可展开：</strong>802.1X 需要端口级 Accept/Reject、授权结果下发和 CoA，
+      这些是 RADIUS 的职责，SAML 断言给不了；
+      两个都要满足时就同时上 ISE 和 Duo（p.290）。另外 RADIUS 路径没有 inline enrollment，
+      用户要事先注册，这一点会影响选型。</p>
+    </div>
+
+    <h3>Q5：ISE 里「认证通过」为什么还不通？</h3>
+    <div class="card">
+      <p><strong>一句话：</strong>ISE 的默认授权策略是 deny，认证只解决「你是谁」，
+      授权规则（AD 组的 <code>ExternalGroups</code> → <code>PermitAccess</code>）才解决「你能进」（p.336、p.338）。</p>
+      <p style="margin-bottom:0"><strong>可展开：</strong>这个模型本身就是最小权限的落地——默认拒绝、按组授予。
+      如果没有这条授权规则，用户会被「认证成功但被拒」这种反直觉状态困住。</p>
+    </div>
+
+    <h3>Q6：Duo 挂了会不会全员登不上？</h3>
+    <div class="card">
+      <p><strong>一句话：</strong>取决于 <code>failmode</code>——<code>safe</code> 主认证成功即放行，
+      <code>secure</code> 直接拒绝（p.349）。</p>
+      <p style="margin-bottom:0"><strong>可展开：</strong>这是典型的安全与可用性取舍，
+      没有通用答案，取决于业务能否接受「认证服务故障 = 全员断网」。
+      回答时说明你会在生产环境选哪个、为什么，比背定义更有分。</p>
+    </div>
+
+    <div class="callout info">
+      <span class="ico">i</span>
+      <div>
+        <p><strong>书里对「该选哪套」的最终态度（p.381）：</strong>
+        AnyConnect VPN 走 SAML + Duo；
+        client VPN / 有线 / 无线走 RADIUS + ISE + 客户端证书作第二因素——
+        理由是 ISE 大幅简化 PKI，且日志与排障能力最强。
+        这个结论可以直接当作「选型题」的标准答案骨架。</p>
+      </div>
+    </div>
+
+    <div class="pager">
+      <a href="../index.html">
+        <span class="dir">返回</span>
+        <span class="ttl">总览与阅读路线</span>
+      </a>
+      <a class="next" href="deep-ch08-lan.html">
+        <span class="dir">下一章</span>
+        <span class="ttl">Ch8 LAN 分段与准入 →</span>
+      </a>
+    </div>
+  </article>
+
+  <footer>
+    <p>Cisco Meraki 企业网络安全 · 深度精读<br>
+    依据《Securing Enterprise Networks with Cisco Meraki》第 7 章（第 287–384 页）· 标注「推论」处为机制推演</p>
+  </footer>
+  </main>
+</div>
+
+<div id="overlay"></div>
+<script src="../assets/app.js"></script>
+</body>
+</html>

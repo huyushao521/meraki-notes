@@ -1,0 +1,624 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ch10 流量安全与 SASE：机制拆解 | Meraki 安全精读</title>
+<meta name="description" content="第 10 章深度精读：MX 本地检查链（L3→L7→内容过滤→AMP/IPS）与 Secure Connect 云链（DNS→Cloud Firewall→SWG→CASB→DLP）的执行顺序、为什么是这个顺序、HTTPS 解密的边界，以及面试可用的机制表述。">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<div id="progress"></div>
+
+<header class="topbar">
+  <button class="menu-btn" aria-label="打开目录">☰</button>
+  <a class="brand" href="../index.html">
+    <span class="dot"></span>
+    Meraki 安全精读
+    <small>Securing Enterprise Networks</small>
+  </a>
+  <span class="topbar-spacer"></span>
+  <a class="topbar-link hide-sm" href="deep-ch09-wan.html">上一章 Ch9</a>
+  <a class="topbar-link" href="../index.html#chapters">章节</a>
+</header>
+
+<div class="layout">
+
+  <nav class="sidebar">
+    <div class="side-group-title">深度精读</div>
+    <a href="../index.html"><span class="num">00</span>总览与路线</a>
+    <a href="deep-ch07-identity.html"><span class="num">07</span>身份与认证</a>
+    <a href="deep-ch08-lan.html"><span class="num">08</span>LAN 分段与准入</a>
+    <a href="deep-ch09-wan.html"><span class="num">09</span>WAN 与 Auto VPN</a>
+    <a class="active" href="deep-ch10-traffic.html"><span class="num">10</span>流量安全与 SASE</a>
+    <div class="side-group-title">细节与背景</div>
+    <a href="tech-details.html"><span class="num">★</span>参数总库</a>
+    <a href="ch02-frameworks.html"><span class="num">02</span>安全框架</a>
+    <a href="ch05-admin-access-details.html"><span class="num">05</span>管理员访问</a>
+    <a href="tech-ch06-ch07.html"><span class="num">6-7</span>细节清单</a>
+    <a href="tech-ch08-ch09.html"><span class="num">8-9</span>细节清单</a>
+    <a href="tech-ch10-ch12.html"><span class="num">10-12</span>细节清单</a>
+  </nav>
+
+  <main>
+  <article class="content">
+
+    <div class="chapter-head">
+      <div class="eyebrow">第 10 章 · 深度精读</div>
+      <h1>流量安全与 SASE：两条检查链，一个顺序问题</h1>
+      <p class="subtitle">
+        这一章是全书篇幅第二大、也是控制措施最集中的地方。
+        表面上是「开了哪些功能」，实质上是<strong>一个顺序问题</strong>：
+        流量在什么位置、被哪一层、按什么依据判定，以及为什么这个顺序不能乱。
+      </p>
+      <div class="meta-row">
+        <span class="chip strong">技术密度：极高</span>
+        <span class="chip">篇幅：119 页</span>
+        <span class="chip">面试高频：执行顺序 / IPS / SASE</span>
+      </div>
+    </div>
+
+    <div class="callout info">
+      <span class="ico">i</span>
+      <div>
+        <p><strong>标注约定：</strong><code>（p.xx）</code> 为书中原文位置；<code>（推论）</code> 为机制推演。
+        本章实验多，我把它们压缩成「动作 → 验证现象 → 页码」的形式，方便直接复现。</p>
+      </div>
+    </div>
+
+    <h2>一、设计理念：两条链，两种检查位置</h2>
+
+    <p>
+      书里实际上给了两套检查体系，很多人把它们混着讲，导致说不清「到底在哪一层被拦」。
+    </p>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>体系</th><th>执行位置</th><th>执行顺序</th><th>依据</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>MX 本地检查链</strong></td>
+            <td>本地 MX 上，流量穿越设备时</td>
+            <td>L3（stateful，先匹配）→ L7 / NBAR（stateless，再评估）→ 内容过滤（URL / 类别 / Talos 威胁类别）→ AMP（文件 disposition）与 IDS/IPS（Snort 签名）</td>
+            <td>p.594、p.597、p.603、p.610、p.614</td>
+          </tr>
+          <tr>
+            <td><strong>Secure Connect 云链</strong></td>
+            <td>Umbrella / SASE 云侧</td>
+            <td><strong>DNS → Cloud Firewall → SWG → CASB → DLP</strong></td>
+            <td>p.617、p.696</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>1.1 为什么 DNS 排在最前面</h3>
+
+    <p>
+      书里对 DNS 安全的表述是<strong>「在任何其他连接建立之前检查 DNS 请求」</strong>（p.639-641）。
+      默认阻断被 Talos 判定为 host malware、command-and-control 基础设施、phishing 的域名，
+      还可以加选 <code>Newly Seen Domains</code>（常用于零日利用）。
+    </p>
+
+    <p>
+      <strong>（推论）</strong>这个位置的优势是「不用解密就能判断意图，且判定发生在 TCP 握手之前」——
+      连接都还没建立，恶意软件拿不到任何载荷。这也是 SASE 体系里 DNS 层不可替代的原因：
+      后面每一层（SWG、CASB、DLP）都需要先有会话、甚至需要解密才能工作。
+    </p>
+
+    <div class="callout warn">
+      <span class="ico">!</span>
+      <div>
+        <p>书中特别提醒：<strong>不建议删掉默认的阻断项</strong>（p.639-641）。
+        默认规则覆盖的是已被确认的恶意基础设施，删掉等于主动放行已知威胁。</p>
+      </div>
+    </div>
+
+    <h3>1.2 HTTPS 是整条链的硬边界</h3>
+
+    <p>
+      这是本章最容易被误解的一点（p.598-599、p.636）：
+      <strong>MX 对 HTTPS 站点的拦截只是 reset 连接</strong>——既看不到内容，也给不了用户 block page。
+      想真正看到内容，必须依赖 Secure Connect 的 <strong>HTTPS inspection + 客户端 Root CA</strong>。
+    </p>
+
+    <p>
+      换句话说，<strong>「开了内容过滤」和「能看到 HTTPS 内容」是两件事</strong>。
+      前者按域名/类别做判定（能拦但要重置连接），后者才是解密后按内容判定（能拦且能给提示页）。
+    </p>
+
+    <h3>1.3 为什么还要有 Cloud Firewall 这一层</h3>
+
+    <p>
+      云链里的 Cloud Firewall 提供的是<strong>与本地 L3 防火墙同类的规则能力</strong>，
+      但它有明确的体验缺陷（p.648）：<strong>只阻断，不给友好页面</strong>，
+      用户看到的是「page cannot be displayed」。官方建议网站类拦截改用 web policy，因为后者有 block page。
+    </p>
+
+    <p>
+      <strong>（推论）</strong>这暗示了功能分层：Cloud Firewall 适合<strong>协议/IP 级</strong>的策略
+      （拦 ICMP、拦某段地址），web policy / SWG 适合<strong>网站级</strong>的策略。
+      用错层不会失效，但会制造大量「打了电话才发现被拦」的工单。
+    </p>
+
+    <h3>1.4 SASE 相比本地设备到底解决什么</h3>
+
+    <p>
+      书里在总结处点了四个能力（p.617、p.706）：
+      <strong>HTTPS 全解密</strong>、<strong>DNS 层前置拦截</strong>、
+      <strong>CASB / DLP 的数据外泄控制</strong>、<strong>集中策略</strong>。
+      附带效果是可以替代多个本地盒子，让站点部署更小的设备。
+    </p>
+
+    <p>
+      这四点是互相支撑的：DNS 管「去向」、解密管「内容可见」、CASB/DLP 管「数据出去」、集中策略管「一致执行」。
+      少任何一环，链条都会断在某个具体场景上。
+    </p>
+
+    <h2>二、机制拆解</h2>
+
+    <h3>2.1 L3 与 L7 的匹配顺序，以及一条被忽略的边界</h3>
+
+    <p>
+      MX 上的顺序是明确的（p.594、p.597）：<strong>L3 防火墙（stateful）先匹配，L7 / NBAR（stateless）再评估</strong>。
+      注意这里的状态差别——L3 是有状态的，L7 是无状态的；而<strong>组策略与无线防火墙里的 L3/L7 都是 stateless</strong>。
+    </p>
+
+    <div class="callout warn">
+      <span class="ico">!</span>
+      <div>
+        <p><strong>规则管不到自己（p.593-594）：</strong>
+        防火墙规则只作用于<strong>穿越设备的流量</strong>；<strong>源或目的为设备自身</strong>的流量不受这些规则约束。
+        另外，system 级 L7 与 L3 规则的处理顺序在 <strong>MX 与 MR 上不同</strong>，不能照搬。</p>
+      </div>
+    </div>
+
+    <h3>2.2 L7 识别：NBAR 与 Geo-IP</h3>
+
+    <p>
+      L7 规则可以按应用（NBAR 应用库）、内容类别、hostname 等维度匹配。
+      Geo-IP 规则则依赖地理位置数据库——书里的实验是先到 <strong>MaxMind demo</strong> 确认某个域名解析到的 IP 归属地，
+      再配国家规则（p.600-603）。这个习惯值得学：
+      <strong>先查 IP 归属，再写规则</strong>，能避免「以为拦的是某个国家，实际拦的是 CDN 节点」。
+    </p>
+
+    <h3>2.3 内容过滤的判定依据</h3>
+
+    <p>
+      三个层次：<strong>Blocked URL List</strong>（精确域名）、<strong>Content Categories</strong>（内容类别）、
+      <strong>Threat Categories</strong>（Talos 威胁分类，例如 Malware Sites）（p.604-609）。
+    </p>
+
+    <p>
+      书里的实验流程体现了一个方法论：先用 <strong>Talos Reputation Center</strong> 查明目标域名的分类
+      （例如查出 <code>adforce.com</code> 属 Advertisements），再去配对应类别。
+      先确认分类，再配规则——否则你封的类别和你想封的东西可能不是一回事。
+    </p>
+
+    <h3>2.4 IDS/IPS：同一个引擎，两种模式</h3>
+
+    <p>
+      书里的定性很干脆（p.614-615）：<strong>IDS 与 IPS 是同一引擎的两种 Mode</strong>，
+      <code>Detection</code> 只告警、<code>Prevention</code> 阻断。
+      规则覆盖面由 Ruleset 的 <strong>CVSS 阈值</strong>决定：
+    </p>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>Ruleset</th><th>CVSS 阈值</th><th>含义</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><code>Connectivity</code></td><td>= 10</td><td>只覆盖最严重的（可用性类）</td></tr>
+          <tr><td><code>Balanced</code></td><td>≥ 9</td><td><strong>默认值</strong></td></tr>
+          <tr><td><code>Security</code></td><td>≥ 8</td><td>覆盖最广，误报也最多</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="callout danger">
+      <span class="ico">×</span>
+      <div>
+        <p><strong>三个必须知道的覆盖边界（p.593、p.614、p.617）：</strong></p>
+        <p style="margin-bottom:0">
+        ① 书中 Table 10-1 明确标注 MX 的 IDS/IPS 为 <strong>HTTP only</strong>；<br>
+        ② <strong>同 VLAN 内主机之间的流量不被检查</strong>；<br>
+        ③ <strong>mTLS / QUIC 等不可检协议</strong>要靠 DNS 层策略来覆盖。</p>
+      </div>
+    </div>
+
+    <h3>2.5 AMP：默认是关的，且有一个前置开关</h3>
+
+    <p>
+      这一点很多人搞错（p.610-611）：<strong>AMP 默认 disabled</strong>，
+      而且必须先在 <code>Network-wide &gt; General</code> 启用 <code>Traffic Analysis</code>
+      （<code>Detailed: Collect Destination Hostnames</code>）才能使用。
+    </p>
+
+    <p>
+      判定机制是<strong>云端文件信誉</strong>，给出三态 disposition：
+      <code>Clean</code> / <code>Malicious</code> / <code>Unknown</code>。
+      已知 <code>Malicious</code> 的 HTTP 下载会被阻断。
+    </p>
+
+    <p>
+      书里强调的架构优势是：这套判定<strong>在云端完成，不牺牲设备吞吐</strong>（p.610-611）。
+      <strong>书中未展开</strong> retrospective（事后追溯告警）的具体机制，这一层需要查 Cisco AMP 文档。
+    </p>
+
+    <h3>2.6 云端的两段式文件检查</h3>
+
+    <p>
+      到了 Secure Connect 侧，文件检查变成两段（p.671-674）：
+      <strong>先由 Cisco AMP 检查，再由 Umbrella 的 antivirus 引擎检查</strong>；
+      两段都完成后才交付文件，否则终止下载并显示 block page。
+    </p>
+
+    <p>
+      还可以再加一层 <strong>Secure Malware Analytics（Threat Grid）沙箱</strong>。
+      但有一个不可逆的配置点：<strong>区域（北美 / 欧洲）选定后不可更改</strong>——
+      这涉及数据驻留合规，选之前必须和法务确认。
+    </p>
+
+    <h3>2.7 文件类型控制：改扩展名也没用</h3>
+
+    <p>
+      <code>File Type Control</code> 靠的是 <strong>Umbrella 的内部检测引擎判定真实文件类型</strong>，
+      所以即使被改了扩展名也能拦住（p.682）。
+      两个使用条件：<strong>只能在 Web policy 中启用</strong>，且<strong>依赖 HTTPS inspection</strong>。
+    </p>
+
+    <h3>2.8 SWG 的 destination list 有硬上限</h3>
+
+    <p>
+      书里给了具体数字（p.657-664）：新建 destination list 时类型选 <code>Web Policy</code>，
+      <strong>单表最多 5,000 条，但建议少于 100 条</strong>。
+      在 Default Web Policy 加规则后必须点 <code>ENABLE RULE</code>；
+      HTTPS 场景要在 <code>HTTPS Inspection</code> 里选 <code>Display Block Page Over HTTPS</code>，
+      否则用户看不到提示页。
+    </p>
+
+    <p>
+      「上限 5,000、建议 100」这组数字反映的是<strong>匹配性能</strong>的现实约束——
+      列表越长，每包匹配成本越高。这也是为什么大型组织要按业务线拆多个 policy 而不是堆一张大表。
+    </p>
+
+    <h3>2.9 HTTPS 解密与一条合规红线</h3>
+
+    <p>
+      HTTPS inspection 是 DLP、File Type Control、内容级判定能成立的前提。
+      但书里明确画了一条红线（p.675-676）：
+      <strong>受监管的敏感数据（例如 HIPAA 下的 PHI）应通过 <code>Selective Decryption List</code> 排除在解密之外</strong>。
+    </p>
+
+    <p>
+      这一点在面试里很加分：它说明「解密一切」不是正确答案，
+      <strong>解密范围本身就是一个合规决策</strong>，需要按数据分类划定边界。
+    </p>
+
+    <h3>2.10 CASB：先看清，再控制</h3>
+
+    <p>
+      书里把 CASB 拆成两个能力层次（p.688-690）：
+    </p>
+    <ul>
+      <li><strong>App Discovery</strong>——报告在用哪些 SaaS / PaaS / IaaS，按类别与风险画像呈现（影子 IT 发现）</li>
+      <li><strong>功能级控制</strong>——对具体应用的具体操作做限制：
+        允许访问 Google Drive 但<strong>不允许上传</strong>；允许访问社交媒体但<strong>不允许 post / share</strong></li>
+    </ul>
+
+    <p>
+      这个「按功能而非按应用」的粒度是关键：传统 URL 过滤只能整站放行或整站封禁，
+      而真正需要管的是「能看不能发」这类场景。
+    </p>
+
+    <h3>2.11 DLP：三种机制覆盖三条外泄路径</h3>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>机制</th><th>覆盖路径</th><th>作用</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><code>Real-Time Rules</code></td><td>Web 流量与 Web 表单</td><td>实时扫描并阻止外泄（含粘贴进网页表单的内容）</td></tr>
+          <tr><td><code>SaaS API Rules</code></td><td>Office 365 等云服务</td><td>把策略延伸到云端，核查外部文件共享是否符合数据分级</td></tr>
+          <tr><td><code>Discovery Scan</code></td><td>外部存储位置</td><td>扫描并报告是否合规（发现了什么、在哪）</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p style="font-size:.9rem;color:var(--text-dim)">依据：p.696</p>
+
+    <p>
+      数据判定方面（p.697-700）：开箱即可识别 <strong>GDPR、HIPAA、PII、PCI</strong> 数据，
+      可用内置 <code>PCI Classification</code> 或自定义 <code>Data Classification</code>；
+      可搜「Content and File Name」，也可用 <code>File Labels</code> 读文档元数据
+      （Office 属性 / 敏感度标签、PDF 属性）。
+    </p>
+
+    <p>
+      前提仍然是<strong>必须有 HTTPS inspection 才能生效</strong>——
+      这条依赖关系把整章的线索串起来了：<strong>没有解密，就没有内容级控制</strong>。
+    </p>
+
+    <h3>2.12 Secure Connect 的两种接入方式，差别在流量路径</h3>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>接入方式</th><th>机制</th><th>验证方式</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>DNS 接入</strong></td>
+            <td>DHCP 把 <code>208.67.222.222</code> 与 <code>208.67.220.220</code> 下发给客户端（<code>Use Umbrella</code>）</td>
+            <td>访问 <code>welcome.umbrella.com</code></td>
+          </tr>
+          <tr>
+            <td><strong>隧道接入</strong></td>
+            <td>MX 把 Secure Connect 当作<strong>一个普通 Auto VPN hub</strong> 来建连；spoke 站点自动获得默认路由，hub 站点可配置</td>
+            <td>DLP 策略里的 identity 以 <code>Tunnels</code> 形式出现</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <p style="font-size:.9rem;color:var(--text-dim)">依据：p.630-631、p.635、p.700</p>
+
+    <p>
+      这个设计的巧妙之处是<strong>复用 Auto VPN</strong>：不用为 SASE 单独建一套 IPsec（p.533）。
+      书里也点明，改用 Secure Connect 后「连 SASE」不再是必须配 non-Meraki IPsec peer 的场景。
+    </p>
+
+    <h2>三、书中的实验（动作 → 现象 → 页码）</h2>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>实验</th><th>配置动作</th><th>验证到的现象</th><th>页码</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>L3 防火墙</td>
+            <td>Guests VLAN → <code>20.76.201.171</code> 出向规则 Deny ICMPv4</td>
+            <td>改动前后 ping 对比；Firewall 页 <code>IPv4 Hits</code> 计数确认命中</td>
+            <td>p.596-597</td>
+          </tr>
+          <tr>
+            <td>L7 防火墙</td>
+            <td>Application 选 <code>Blogging / All Blogging</code>（Policy 固定 Deny 不可改）</td>
+            <td>访问 wordpress.com 被拒；event log 的 event type 为 <code>Layer 7 Firewall Rule</code>，<strong>NBAR ID 3444</strong> 即 WordPress</td>
+            <td>p.597-599</td>
+          </tr>
+          <tr>
+            <td>Geo-IP</td>
+            <td>先用 MaxMind demo 确认 <code>www.iamsterdam.nl</code> 解析到荷兰，再加 Countries 规则</td>
+            <td>该 HTTPS 站点连接被 reset，无法访问</td>
+            <td>p.600-603</td>
+          </tr>
+          <tr>
+            <td>URL 过滤</td>
+            <td>把 <code>www.taylorswift.com</code> 加入 Blocked URL List</td>
+            <td>HTTPS 表现为连接 reset；event type 为 <code>Content Filtering Blocked URL</code></td>
+            <td>p.604-605</td>
+          </tr>
+          <tr>
+            <td>类别阻断</td>
+            <td>用 Talos Reputation Center 查出 <code>adforce.com</code> 属 Advertisements，再选该类别 + Malware Sites</td>
+            <td>目标被拦，事件写入 event log</td>
+            <td>p.605-609</td>
+          </tr>
+          <tr>
+            <td>AMP</td>
+            <td>从 eicar.eu 下载 <code>eicarcom2.zip</code> 的 HTTP 链接</td>
+            <td>会话被阻断并 reset；日志出现在 <strong>Security Center &gt; MX Events</strong>，<strong>不是</strong> event log</td>
+            <td>p.612-613</td>
+          </tr>
+          <tr>
+            <td>IDS/IPS</td>
+            <td>Mode 设 <code>Prevention</code>，Ruleset 留 <code>Balanced</code>，用 <code>cpcheckme.com/checkme</code> 触发</td>
+            <td>Security Center 的 MX Events 标签出现签名告警</td>
+            <td>p.614-615</td>
+          </tr>
+          <tr>
+            <td>Cloud Firewall</td>
+            <td>建 Deny ICMP 到 <code>20.76.201.171</code> 的 Internet Traffic Rule，用 Change Status 切换启停</td>
+            <td>ping 8.8.8.8 仍通、目标被阻——证明是精确命中而非全断</td>
+            <td>p.642-648</td>
+          </tr>
+          <tr>
+            <td>SWG 封 YouTube</td>
+            <td>建 YouTube destination list → Default Web Policy 加 Block 规则并 ENABLE → HTTPS Inspection 选 Display Block Page Over HTTPS</td>
+            <td>访问 <code>https://www.youtube.com</code> 重定向到 Umbrella block page</td>
+            <td>p.657-664</td>
+          </tr>
+          <tr>
+            <td>DLP 三通道</td>
+            <td>Real-Time Rule 用内置 PCI Classification、identity 选 All Tunnels、action Block</td>
+            <td>用 <strong>Gmail 附件 / Gmail 正文 / ChatGPT 提问</strong> 三种途径提交虚拟卡号都被拦；报表里能看到文件名或 Form 标记与卡号后四位</td>
+            <td>p.697-706</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="callout tip">
+      <span class="ico">◆</span>
+      <div>
+        <p><strong>实验设计里最值得学的一点：</strong>每个实验都同时验证「被拦的东西拦住了」和「不该拦的东西没被拦」。
+        例如 Cloud Firewall 实验特意 ping 8.8.8.8 证明 Internet 仍通；
+        SGT 实验特意验证网关照常、POS→POS server 正常。
+        <strong>只证明「拦住了」的测试是不完整的</strong>，这一点在面试里说出来会显得很专业。</p>
+      </div>
+    </div>
+
+    <h2>四、限制与坑</h2>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>坑</th><th>表现</th><th>依据</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>HTTPS 没有 block page</strong></td>
+            <td>MX 对 HTTPS 只能 reset 连接，看不到内容；要提示页必须走 Secure Connect + Display Block Page Over HTTPS</td>
+            <td>p.598-599、p.636</td>
+          </tr>
+          <tr>
+            <td><strong>IDS/IPS 只覆盖 HTTP</strong></td>
+            <td>Table 10-1 明确标注 HTTP only；<strong>同 VLAN 内主机间流量不检查</strong>；mTLS/QUIC 不可检，需靠 DNS 层覆盖</td>
+            <td>p.593、p.614、p.617</td>
+          </tr>
+          <tr>
+            <td><strong>AMP 默认关闭且需前置开关</strong></td>
+            <td>默认 disabled；必须先在 Network-wide &gt; General 启用 Traffic Analysis（Detailed: Collect Destination Hostnames）</td>
+            <td>p.610</td>
+          </tr>
+          <tr>
+            <td><strong>AMP 告警不在 event log</strong></td>
+            <td>要看 <code>Security Center &gt; MX Events</code>，不是常规 event log——排障时容易找错地方</td>
+            <td>p.612-613</td>
+          </tr>
+          <tr>
+            <td><strong>许可门槛分散</strong></td>
+            <td>Geo-IP、内容类别、IDS/IPS、AMP 需 <strong>Advanced Security License</strong>；AnyConnect 需额外 licence；否则功能面板可见但不可用</td>
+            <td>p.593、p.552</td>
+          </tr>
+          <tr>
+            <td><strong>Cloud Firewall 没有友好页面</strong></td>
+            <td>只阻断，用户看到 page cannot be displayed；网站类拦截应用 web policy 以拿到 block page</td>
+            <td>p.648</td>
+          </tr>
+          <tr>
+            <td><strong>规则只管穿越流量</strong></td>
+            <td>源或目的为设备自身的流量不受防火墙规则约束；且 system 级 L7 与 L3 的顺序在 MX 与 MR 上不同</td>
+            <td>p.593-594</td>
+          </tr>
+          <tr>
+            <td><strong>新增策略不自动生效</strong></td>
+            <td>防火墙规则或地址变化后，后建的内容过滤策略需<strong>手动应用</strong>到受影响的规则上</td>
+            <td>p.594</td>
+          </tr>
+          <tr>
+            <td><strong>destination list 有上限</strong></td>
+            <td>单表最多 5,000 条，官方建议少于 100 条；性能随条目增长下降</td>
+            <td>p.657-664</td>
+          </tr>
+          <tr>
+            <td><strong>误伤：Gmail 登录会走 YouTube URL</strong></td>
+            <td>若 SWG 封了 YouTube 而没设例外，用户的 Gmail 登录可能异常——因为 Google 登录流程会跳转到 youtube.com/... 的 URL</td>
+            <td>p.664</td>
+          </tr>
+          <tr>
+            <td><strong>File Type Control 受限</strong></td>
+            <td>只能在 Web policy 中启用，且依赖 HTTPS inspection；没有解密就没有真实类型判定</td>
+            <td>p.682</td>
+          </tr>
+          <tr>
+            <td><strong>Threat Grid 区域不可改</strong></td>
+            <td>沙箱区域（北美 / 欧洲）选定后无法更改，涉及数据驻留合规，选前须与法务确认</td>
+            <td>p.671-674</td>
+          </tr>
+          <tr>
+            <td><strong>Secure Connect 集成不可逆</strong></td>
+            <td>需用 Legacy API Key 的三组值（API key、org ID、secret）；<strong>Region 一旦集成便不可更改</strong></td>
+            <td>p.632-633</td>
+          </tr>
+          <tr>
+            <td><strong>解密范围本身是合规问题</strong></td>
+            <td>受监管敏感数据（HIPAA 下的 PHI）应通过 Selective Decryption List 排除在解密之外</td>
+            <td>p.675-676</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2>五、面试问答</h2>
+
+    <h3>Q1：MX 上的流量按什么顺序被检查？</h3>
+    <div class="card">
+      <p><strong>一句话：</strong><strong>L3（stateful）先匹配 → L7 / NBAR（stateless）再评估 → 内容过滤（URL / 类别 / Talos 威胁类别）→ AMP 与 IDS/IPS</strong>（p.594、p.597、p.603、p.610、p.614）。</p>
+      <p style="margin-bottom:0"><strong>可展开：</strong>L3 有状态而 L7 无状态；
+      组策略与无线防火墙里的 L3/L7 都是 stateless，所以 deny 后要显式放行回程；
+      规则只作用于穿越设备的流量，设备自身发起的流量不受约束。</p>
+    </div>
+
+    <h3>Q2：为什么 SASE 的执行顺序是 DNS → Cloud Firewall → SWG → CASB → DLP？</h3>
+    <div class="card">
+      <p><strong>一句话：</strong>越前面越便宜、越不需要解密——DNS 能在连接建立之前就判定去向，
+      越靠后的层（SWG / CASB / DLP）需要的上下文越多，DLP 甚至必须有解密才能看内容（p.617、p.639、p.696）。</p>
+      <p style="margin-bottom:0"><strong>可展开：</strong>DNS 层覆盖 mTLS / QUIC 等不可检协议；
+      解密是内容级能力的前置条件；解密范围本身要按合规要求划定（HIPAA PHI 应排除）。
+      回答时讲清「成本递增」与「上下文递增」两条主线即可。</p>
+    </div>
+
+    <h3>Q3：IDS 和 IPS 的区别？该选哪个 Ruleset？</h3>
+    <div class="card">
+      <p><strong>一句话：</strong>同一引擎两种 Mode——<code>Detection</code> 告警、<code>Prevention</code> 阻断；
+      Ruleset 按 CVSS 阈值分 <code>Connectivity</code>(=10)、<code>Balanced</code>(≥9，默认)、<code>Security</code>(≥8)（p.614-615）。</p>
+      <p style="margin-bottom:0"><strong>可展开：</strong>阈值越低覆盖越广、误报越多，所以这是可用性与检出率的权衡；
+      另外要知道覆盖边界——HTTP only、不检查同 VLAN 内主机互访、不可检 mTLS/QUIC。</p>
+    </div>
+
+    <h3>Q4：一个恶意文件是怎么被拦住的？</h3>
+    <div class="card">
+      <p><strong>一句话：</strong>AMP 用云端文件信誉给出 <code>Clean / Malicious / Unknown</code> 三态判定，
+      已知 <code>Malicious</code> 的 HTTP 下载直接阻断；云端判定不占用设备吞吐（p.610-613）。</p>
+      <p style="margin-bottom:0"><strong>可展开：</strong>前提是启用 Traffic Analysis；告警在 Security Center &gt; MX Events；
+      云侧还能做两段式检查（AMP + Umbrella antivirus）甚至 Threat Grid 沙箱，
+      两段都完成才交付文件。Unknown 文件靠沙箱与 retrospection 补位。</p>
+    </div>
+
+    <h3>Q5：内容过滤能看 HTTPS 内容吗？</h3>
+    <div class="card">
+      <p><strong>一句话：</strong>不能。MX 对 HTTPS 只 reset 连接，既无内容可见也无 block page；
+      要看到内容必须走 Secure Connect 的 HTTPS inspection + 客户端 Root CA（p.598-599、p.636）。</p>
+      <p style="margin-bottom:0"><strong>可展开：</strong>所以「开了内容过滤」只等于按域名/类别拦截；
+      真正的按内容判定（DLP、文件类型、CASB 功能控制）都依赖解密。
+      反过来，解密范围要按数据合规边界设置（Selective Decryption List 排除 PHI）。</p>
+    </div>
+
+    <h3>Q6：SASE 相比一堆本地安全盒子，优势在哪？</h3>
+    <div class="card">
+      <p><strong>一句话：</strong>四个本地设备拿不到的能力——HTTPS 全解密、DNS 层前置拦截、
+      CASB/DLP 的数据外泄控制、集中一致的策略（p.617、p.706）。</p>
+      <p style="margin-bottom:0"><strong>可展开：</strong>附带收益是站点可以只放小设备，减少本地硬件的运维与容量规划负担；
+      代价是流量要引到云（隧道或 DNS 方式），对链路质量和云侧可用性有依赖。
+      回答时把「能力增量」和「依赖代价」一起说，会比单方面夸更有说服力。</p>
+    </div>
+
+    <div class="callout info">
+      <span class="ico">i</span>
+      <div>
+        <p><strong>本章的主线，一句话：</strong>
+        <strong>位置决定能力，解密决定深度。</strong>
+        DNS 层能拦在建连之前但看不到内容；本地 MX 能在 L3/L7 精确命中但拿 HTTPS 没办法；
+        云端 SASE 能解密看内容但要承担流量绕行与合规边界的代价。
+        任何一道防线说清楚「它在哪、看到什么、拦得住什么」，就是合格的回答。</p>
+      </div>
+    </div>
+
+    <div class="pager">
+      <a href="deep-ch09-wan.html">
+        <span class="dir">上一章</span>
+        <span class="ttl">Ch9 WAN 与 Auto VPN</span>
+      </a>
+      <a class="next" href="../index.html">
+        <span class="dir">返回</span>
+        <span class="ttl">总览与阅读路线</span>
+      </a>
+    </div>
+  </article>
+
+  <footer>
+    <p>Cisco Meraki 企业网络安全 · 深度精读<br>
+    依据《Securing Enterprise Networks with Cisco Meraki》第 10 章（第 591–710 页）· 标注「推论」处为机制推演</p>
+  </footer>
+  </main>
+</div>
+
+<div id="overlay"></div>
+<script src="../assets/app.js"></script>
+</body>
+</html>

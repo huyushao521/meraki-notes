@@ -25,22 +25,19 @@
 <div class="layout">
 
   <nav class="sidebar">
-    <div class="side-group-title">笔记目录</div>
-    <a href="../index.html"><span class="num">00</span>重要度地图</a>
-    <a href="tech-details.html"><span class="num">★</span>技术细节总库</a>
-    <a href="ch02-frameworks.html"><span class="num">02</span>安全框架与最佳实践</a>
-    <a class="soon"><span class="num">03</span>Dashboard 与云信任</a>
-    <a class="soon"><span class="num">04</span>RBAC 与最小权限</a>
-    <a href="ch05-admin-access-details.html"><span class="num">05</span>管理员访问 · 实战篇</a>
-    <a class="soon"><span class="num">06</span>安全运营与日志</a>
-    <a class="soon"><span class="num">07</span>用户认证与零信任</a>
-    <a class="soon"><span class="num">08</span>有线无线 LAN 安全</a>
-    <a class="soon"><span class="num">09</span>MX 与 WAN 安全</a>
-    <a class="soon"><span class="num">10</span>用户流量安全</a>
-    <a class="soon"><span class="num">11</span>终端设备安全</a>
-    <a class="soon"><span class="num">12</span>物理安全</a>
-    <div class="side-group-title">附录</div>
-    <a class="soon"><span class="num">A</span>安全标准对照表</a>
+    <div class="side-group-title">深度精读</div>
+    <a href="../index.html"><span class="num">00</span>总览与路线</a>
+    <a href="deep-ch07-identity.html"><span class="num">07</span>身份与认证</a>
+    <a href="deep-ch08-lan.html"><span class="num">08</span>LAN 分段与准入</a>
+    <a href="deep-ch09-wan.html"><span class="num">09</span>WAN 与 Auto VPN</a>
+    <a href="deep-ch10-traffic.html"><span class="num">10</span>流量安全与 SASE</a>
+    <div class="side-group-title">细节与背景</div>
+    <a href="tech-details.html"><span class="num">★</span>参数总库</a>
+    <a href="ch02-frameworks.html"><span class="num">02</span>安全框架</a>
+    <a class="active" href="ch05-admin-access-details.html"><span class="num">05</span>管理员访问</a>
+    <a href="tech-ch06-ch07.html"><span class="num">6-7</span>细节清单</a>
+    <a href="tech-ch08-ch09.html"><span class="num">8-9</span>细节清单</a>
+    <a href="tech-ch10-ch12.html"><span class="num">10-12</span>细节清单</a>
   </nav>
 
   <main>
@@ -319,19 +316,6 @@
         <p style="margin-bottom:0">从已核实的内容看，技术细节密度最高的几章是
         <strong>Ch5（管理员访问）、Ch7（用户认证）、Ch8（LAN 安全）、Ch10（流量安全）</strong>——
         Ch7 甚至给出了每种认证方案的「配置步骤数量」和「难度评级」。</p>
-      </div>
-    </div>
-
-    <h2>记忆口诀</h2>
-
-    <div class="mnemonic">
-      <span class="label">配置清单速记</span>
-      <div class="text">
-        密码九十天一换，四个不复用，八位三类字符；<br>
-        错十次就锁定，闲十五分登出；<br>
-        白名单三到十段，IPv6 别放过；<br>
-        先开一人 MFA，再强制全员，八个码子先抄；<br>
-        上了 SSO 别忘记——控制在 IdP，白名单去 Duo。
       </div>
     </div>
 

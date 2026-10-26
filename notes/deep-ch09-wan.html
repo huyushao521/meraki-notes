@@ -1,0 +1,506 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ch9 WAN 与 Auto VPN：机制拆解 | Meraki 安全精读</title>
+<meta name="description" content="第 9 章深度精读：Auto VPN 为什么能零配置、控制面与数据面分离的代价、hub/spoke 拓扑取舍、non-Meraki peer 的硬限制、Client VPN 与 AnyConnect 的参数差异、vMX 的能力边界。">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<div id="progress"></div>
+
+<header class="topbar">
+  <button class="menu-btn" aria-label="打开目录">☰</button>
+  <a class="brand" href="../index.html">
+    <span class="dot"></span>
+    Meraki 安全精读
+    <small>Securing Enterprise Networks</small>
+  </a>
+  <span class="topbar-spacer"></span>
+  <a class="topbar-link hide-sm" href="deep-ch08-lan.html">上一章 Ch8</a>
+  <a class="topbar-link" href="../index.html#chapters">章节</a>
+</header>
+
+<div class="layout">
+
+  <nav class="sidebar">
+    <div class="side-group-title">深度精读</div>
+    <a href="../index.html"><span class="num">00</span>总览与路线</a>
+    <a href="deep-ch07-identity.html"><span class="num">07</span>身份与认证</a>
+    <a href="deep-ch08-lan.html"><span class="num">08</span>LAN 分段与准入</a>
+    <a class="active" href="deep-ch09-wan.html"><span class="num">09</span>WAN 与 Auto VPN</a>
+    <a href="deep-ch10-traffic.html"><span class="num">10</span>流量安全与 SASE</a>
+    <div class="side-group-title">细节与背景</div>
+    <a href="tech-details.html"><span class="num">★</span>参数总库</a>
+    <a href="ch02-frameworks.html"><span class="num">02</span>安全框架</a>
+    <a href="ch05-admin-access-details.html"><span class="num">05</span>管理员访问</a>
+    <a href="tech-ch06-ch07.html"><span class="num">6-7</span>细节清单</a>
+    <a href="tech-ch08-ch09.html"><span class="num">8-9</span>细节清单</a>
+    <a href="tech-ch10-ch12.html"><span class="num">10-12</span>细节清单</a>
+  </nav>
+
+  <main>
+  <article class="content">
+
+    <div class="chapter-head">
+      <div class="eyebrow">第 9 章 · 深度精读</div>
+      <h1>WAN 与 Auto VPN：零配置背后的控制面</h1>
+      <p class="subtitle">
+        Auto VPN 是 Meraki 最有辨识度的能力，也是最容易被误解的——
+        很多人以为「流量会绕经 Dashboard」，实际上云端只做注册与密钥下发，
+        数据面是 MX 之间直连的。理解这条分界线，才能理解它的性能与限制来自哪里。
+      </p>
+      <div class="meta-row">
+        <span class="chip strong">技术密度：高</span>
+        <span class="chip">含 vMX 云上部署</span>
+        <span class="chip">面试高频：Auto VPN 机制</span>
+      </div>
+    </div>
+
+    <div class="callout info">
+      <span class="ico">i</span>
+      <div>
+        <p><strong>标注约定：</strong><code>（p.xx）</code> 为书中原文位置；<code>（推论）</code> 为机制推演。
+        本章有几处常见说法书里确实没写——比如 SD-WAN 的 uplink selection 探测细节、
+        与传统 DMVPN/MPLS 的系统对比，我不会虚构，遇到会明确标注。</p>
+      </div>
+    </div>
+
+    <h2>一、设计理念：控制面在云，数据面在设备</h2>
+
+    <p>
+      书里对 Auto VPN 的机制描述得很克制，但足够看清设计（p.528）：
+      <strong>Dashboard / VPN Registry 只做三件事——注册、下发对端信息、下发「双向各一个 16 字符密钥」
+      （走 NexTunnel / TCP 443）</strong>。隧道随后由 MX 之间<strong>直接建立</strong>，并自动传播路由。
+    </p>
+
+    <p>
+      正因如此，管理员的动作被压缩到两步：<strong>选 VPN 类型 + 勾需要通告的子网</strong>。
+      这是「零配置」的全部含义。
+    </p>
+
+    <div class="callout tip">
+      <span class="ico">◆</span>
+      <div>
+        <p><strong>（推论）这条分界线决定了三件事：</strong>
+        ① 数据面不经过云端，所以隧道带宽不消耗云的转发能力，也不受 Dashboard 可用性影响（已建隧道可继续转发）；
+        ② 但<strong>新建隧道、配置变更、路由更新依赖云端</strong>，Dashboard 不可用期间无法新增站点；
+        ③ 密钥由云端协商下发，意味着<strong>云账户的安全等级等于全网 VPN 的安全等级</strong>——
+        这也是为什么第 3、5 章要把 Dashboard 管理员访问管得那么死。</p>
+      </div>
+    </div>
+
+    <h3>1.1 拓扑取舍：先把流量走法想清楚</h3>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>拓扑</th><th>隧道数量</th><th>流量走法</th><th>适用判断</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>hub-and-spoke</strong></td>
+            <td>最少</td>
+            <td>spoke 只连 hub，spoke 之间流量过 hub</td>
+            <td>分支之间几乎不通信；或规模大到要控制隧道数（p.528）</td>
+          </tr>
+          <tr>
+            <td><strong>full mesh（多 hub）</strong></td>
+            <td>随站点数平方增长</td>
+            <td>hub 之间自动 full mesh</td>
+            <td>分支之间流量大，绕 hub 会浪费带宽与增加延迟（p.528）</td>
+          </tr>
+          <tr>
+            <td><strong>专用 MX 作 hub（VPN Concentrator mode）</strong></td>
+            <td>最少</td>
+            <td>集中在数据中心做汇聚</td>
+            <td>规模优先，接受中心化转发（p.528）</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>
+      书里的演进逻辑很清楚：<strong>分支间流量大了，就把分支也设为 hub，一路演进到 full mesh</strong>；
+      反过来，规模优先就用专用 MX 做汇聚，隧道数最少（p.528）。
+      这是一个可以逐步调整的决策，不需要一开始就定死。
+    </p>
+
+    <h3>1.2 一条重要的产品哲学分界</h3>
+
+    <p>
+      同样是「建一条 IPsec 隧道」，Meraki 内部与对外是两套完全不同的设计：
+    </p>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>对比项</th><th>Auto VPN（双方都是 Meraki）</th><th>non-Meraki VPN peer（对方是第三方）</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>认证</td><td>云端协商下发密钥</td><td><strong>只支持 preshared key，不支持证书</strong>（p.533）</td></tr>
+          <tr><td>双 WAN</td><td><strong>primary 与 secondary 上同时自动建隧道</strong>（p.537）</td><td><strong>只用 primary Internet uplink</strong>，官方称增强功能还在规划（p.537）</td></tr>
+          <tr><td>密钥管理</td><td>每对隧道独立协商</td><td><strong>organization-wide，多台 MX 共用同一个 shared secret</strong>（p.533）</td></tr>
+          <tr><td>配置成本</td><td>选类型 + 勾子网</td><td>手填 Public IP/FQDN、secret、私网段、IPsec policy</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>
+      这个对比说明 Meraki 的取舍：<strong>「自己人之间」的隧道做到极致自动化，
+      「跟外人」的连接降级为传统 IPsec peer</strong>。
+      报障时如果对方说「我们也是 Meraki」，那大概率不是配置问题而是组织归属/子网通告问题；
+      如果对方是第三方设备，就要按传统 IPsec 的思路查（PSK、UDP 500/4500 可达、仅 primary）。
+    </p>
+
+    <h3>1.3 两条远程接入路线：Client VPN 与 AnyConnect</h3>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>对比项</th><th>Client VPN</th><th>AnyConnect VPN</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>隧道协议</td><td>IPsec <strong>L2TP</strong></td><td><strong>TLS / DTLS</strong></td></tr>
+          <tr><td>加密参数</td><td>Phase 1 = <strong>3DES + SHA1</strong>；Phase 2 = <strong>AES-128/3DES + SHA1</strong></td><td><strong>AES-256 与 3DES-168</strong></td></tr>
+          <tr><td>认证方式</td><td>Meraki Cloud Auth / RADIUS / AD</td><td><strong>SAML</strong> / Cloud Auth / RADIUS / AD</td></tr>
+          <tr><td>许可</td><td>所有当前 MX、<strong>任意 license 层级</strong>可用</td><td>需<strong>额外</strong> Cisco AnyConnect license</td></tr>
+          <tr><td>拆分流</td><td>无（Sentry VPN 可勾 Send All Traffic）</td><td><code>Client Routing</code>（传统 split tunnel）与 <code>Dynamic Client Routing</code></td></tr>
+          <tr><td>客户端</td><td>Mac/Windows/Linux，含 macOS/iOS/iPadOS 原生 VPN</td><td>Cisco Secure Client</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p style="font-size:.9rem;color:var(--text-dim)">依据：p.541-556</p>
+
+    <p>
+      从参数就能看出两者的定位：Client VPN 用的是 <strong>3DES + SHA1</strong> 这种明显偏旧的组合，
+      但胜在零成本、零客户端安装（系统自带）；AnyConnect 是 AES-256 + TLS/DTLS，
+      支持 SAML 与按域名分流，代价是要额外许可。
+      <strong>书里推荐用 AnyConnect</strong>（p.541）。
+    </p>
+
+    <h3>1.4 vMX：把 Auto VPN 的边界推到云上</h3>
+
+    <p>
+      vMX 的定位是把 Meraki 的安全栈放进 AWS/Azure 的 VPC，让云上资源也成为 Auto VPN 的一个站点（p.566-586）。
+      但它的能力边界非常明显——这是一台「为组网而生」的虚拟设备，不是完整功能的 MX：
+      <strong>不支持 AMP、IDS/IPS、Geo IP L7 规则、802.1X 端口认证、Splash page、双 WAN 或 LAN 口</strong>（p.563）。
+    </p>
+
+    <p>
+      换句话说，<strong>云上那一段的流量安全检查是缺失的</strong>。如果架构上依赖 vMX 做安全出口，这个坑必须在设计阶段就补掉。
+    </p>
+
+    <h2>二、机制拆解</h2>
+
+    <h3>2.1 双 WAN 的行为差异，决定了故障切换能力</h3>
+
+    <p>
+      书里给了两条硬事实（p.537）：
+    </p>
+    <ul>
+      <li><strong>Auto VPN 会在 primary 与 secondary WAN 接口上同时自动建立隧道</strong>——所以一条上行挂了，隧道不需要重建，切换是「换个口继续走」</li>
+      <li><strong>non-Meraki VPN 连接只用 primary Internet uplink</strong>——primary 挂掉，这条隧道就没了，官方称增强功能「尚在规划中」</li>
+    </ul>
+
+    <p>
+      再叠加 <strong>HA pair 的 automatic failover</strong>（p.528），构成两级冗余：
+      单条上行故障靠双 WAN 隧道，整台设备故障靠 HA pair。
+    </p>
+
+    <p>
+      可观测性上，在 <code>VPN Status</code> 页把鼠标悬停在网络名上，可以看到该隧道的
+      <strong>latency 与 usage</strong>（p.531）——这是判断「隧道活着但质量差」的唯一入口，
+      比只看 up/down 有用得多。
+    </p>
+
+    <h3>2.2 non-Meraki peer 的配置结构与一个方向性陷阱</h3>
+
+    <p>
+      配置路径是 <code>Organization-wide &gt; Non-Meraki VPN Peers &gt; Add a Peer</code>（p.534-538）：
+      Type 选 <code>Hub (Mesh)</code>、填 Public IP/FQDN、Shared Secret、Private Subnets、
+      Availability（保持 All Networks 或用 Tags 限定），然后选 Preset 或自定义 IPSec Policy。
+    </p>
+
+    <p>
+      如果子网填 <code>0.0.0.0/0</code>，会弹窗提示<strong>最长匹配优先</strong>，需要手动 Confirm。
+      这个提示很关键——它意味着默认路由不会覆盖更具体的路由，但会与同精度的路由竞争。
+    </p>
+
+    <div class="callout warn">
+      <span class="ico">!</span>
+      <div>
+        <p><strong>方向性陷阱（p.538）：</strong>site-to-site VPN 的防火墙规则是
+        <strong>outbound 且 organization-wide</strong> 的。要拒绝到某个子网的流量，
+        必须把该子网<strong>写到 Source</strong>（实际效果是阻断<strong>回程</strong>流量）；
+        如果只想对某些远端站点生效，就把该站点的本地网段写进 <strong>Destination</strong>。</p>
+        <p style="margin-bottom:0">规则方向与直觉相反，是这类配置最常见的翻车点。</p>
+      </div>
+    </div>
+
+    <h3>2.3 Client VPN 的关键参数</h3>
+
+    <p>
+      路径：<code>Security &amp; SD-WAN &gt; Client VPN</code> 的 IPsec Settings（p.542-547）。要点：
+    </p>
+    <ul>
+      <li><strong>Hostname 由 Meraki 动态 DNS 自动生成</strong>，解析自动更新——不需要自己有公网域名</li>
+      <li>Subnet 必须未被占用，配置前先到 Route Table 查一遍</li>
+      <li>DNS Server 可选 <code>Use Umbrella</code> 或 <code>Specify Nameservers</code>——这是把远程接入流量导向 Umbrella 的开关</li>
+      <li><strong>Shared Secret 建议不要首尾使用特殊字符</strong>——系统自带客户端对特殊字符的兼容性差</li>
+      <li>Authentication 选 RADIUS 是推荐项，Meraki Cloud Authentication 只适合小规模</li>
+    </ul>
+
+    <h3>2.4 AnyConnect 的关键参数</h3>
+
+    <p>（p.552-556）</p>
+    <ul>
+      <li>端口默认 <strong>443</strong>，且不能与 NAT exceptions（No NAT）功能启用在同一 WAN uplink 上</li>
+      <li>不支持 <strong>cellular 接口</strong>——若必须经蜂窝建 VPN，官方建议加 Meraki MG cellular gateway 并用 IP Passthrough 模式</li>
+      <li>平台固件门槛：<strong>≥16.16</strong>（含 vMX）；但 <strong>MX64(W)/MX65(W) 需 ≥17.6</strong>；IPv6 Prefix 需 ≥18.104</li>
+      <li><code>Client Routing</code> 即传统 split tunneling；<code>Dynamic Client Routing</code> 可按<strong>域名</strong>（而非子网）决定流量进出隧道，让云服务直连</li>
+      <li><code>Session Timeout</code> 默认 <code>None</code>，Custom 最长 <strong>256 小时</strong></li>
+      <li>443 若被其他 Web 服务占用，建议把 VPN 用户终结到<strong>另一台 MX</strong></li>
+    </ul>
+
+    <h3>2.5 vMX 的部署拓扑与型号对应</h3>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>vMX 规格</th><th>AWS 实例类型</th><th>备注</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>vMX-S / vMX-M</td><td><code>c5.large</code></td><td>—</td></tr>
+          <tr><td>vMX-L</td><td><code>c5.xlarge</code></td><td>—</td></tr>
+          <tr><td>vMX-XL</td><td><code>c6in.2xlarge</code></td><td>走 <code>Cisco Meraki Next-Gen vMX</code> 镜像；beta，仅 AWS（p.573）</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>
+      部署主干（p.566-586）：Dashboard 建 Security Appliance 网络并选 vMX license →
+      <strong>Generate Authentication Token（1 小时内必须用）</strong> →
+      AWS 建 Internet Gateway + <code>0.0.0.0/0</code> 默认路由 →
+      Marketplace 订阅 vMX，Advanced Details 里设
+      <code>Metadata Accessible=Enabled</code>、<code>Metadata Version=V1 and V2 (Token Optional)</code>、
+      <code>Hop Limit=1</code>，User Data 粘入 token →
+      <strong>关掉网卡 Source/Destination Check</strong>，否则转发不生效。
+    </p>
+
+    <p>
+      最后一步最容易漏：云平台的网卡默认会丢弃「源或目的不是自己」的报文，
+      不关这个检查，隧道的转发流量会静默失败。
+    </p>
+
+    <h2>三、书中的实验</h2>
+
+    <h3>3.1 hub + spoke：三步配完，三步验证</h3>
+
+    <p><strong>配置（p.529-530）：</strong></p>
+    <ol class="keypoints">
+      <li>Hub 站点 Type 选 <code>Hub (Mesh)</code>（exit hub 不需要；exit hub 用于 full-mesh 下当默认网关，文档中称 full-tunneling）</li>
+      <li>对需要通告的子网启用 <code>VPN Mode</code>，Save</li>
+      <li>Spoke 站点 Type 选 <code>Spoke</code>，Hubs 已自动选中可排序；若 hub 提供 Internet 访问则勾 <code>IPv4 Default Route</code>，启 VPN Mode，Save</li>
+    </ol>
+
+    <p><strong>验证（p.530-532）：</strong></p>
+    <ul>
+      <li><code>Security &amp; SD-WAN &gt; VPN Status</code> 看隧道 Up，悬停看 latency / usage</li>
+      <li><code>Exported Subnets</code> 看通告网段</li>
+      <li><code>Route Table</code> 按 Destination 过滤，确认从 hub 收到的路由</li>
+      <li><code>Appliance Status &gt; Tools &gt; Ping</code> 打 hub 侧网段网关</li>
+    </ul>
+
+    <p>
+      这四步的顺序值得记住：<strong>隧道 → 通告 → 路由 → 连通性</strong>。
+      排障时按这个顺序定位，能迅速区分「隧道没建起来」和「隧道通了但路由没学到」。
+    </p>
+
+    <h3>3.2 Client VPN 连通验证</h3>
+
+    <p>
+      配完后在 macOS <code>System Settings &gt; VPN</code> 添加 <code>L2TP over IPSec</code> profile 并连接（p.542-547）。
+      这一步证明了 L2TP 方案的最大优势：<strong>系统自带客户端，无需安装任何软件</strong>。
+    </p>
+
+    <h3>3.3 Sentry VPN：零用户干预的连接</h3>
+
+    <p>
+      <code>Client VPN &gt; IPsec Settings</code> 下方启用 <code>Systems Manager Sentry VPN Security</code>，
+      <code>Add Sentry Network</code> 选含 Systems Manager 设备的网络、Scope 设 All Devices、勾 Send All Traffic（p.549-552）。
+    </p>
+
+    <p>
+      设备端在 <code>Settings &gt; General &gt; VPN &amp; Device Management &gt; Meraki Systems Manager</code> 里
+      滑动 VPN Status 即连接，<strong>无需任何用户干预</strong>。
+      想加速下发可在 <code>Systems Manager &gt; Devices</code> 执行 <code>Sync Profiles</code>。
+    </p>
+
+    <h3>3.4 用 Group Policy 限制 VPN 用户能访问什么</h3>
+
+    <p>
+      这是本章一个很实用的例子（p.561-563）：在 AnyConnect Settings 的 Default Group Policy 应用策略
+      <code>Remote_access_VPN_users</code>，其中含一条<strong>阻止 ICMP 到 10.200.155.10</strong> 的 L3 防火墙规则。
+    </p>
+
+    <p>
+      结果：用户<strong>仍能 ping 网关 10.200.155.1</strong>，但 <strong>ping 不通 10.200.155.10</strong>——
+      精准命中，不影响其他流量。
+    </p>
+
+    <p>
+      书里同时列出了其他可选手段：<code>Client Routing</code>、<code>Filter-ID</code> RADIUS 属性、
+      用 Sentry policy 分配 group policy、Outbound L3 firewall。
+      这说明「限制 VPN 用户访问范围」有多种实现路径，选哪种取决于策略从哪来（本地静态 / RADIUS 动态 / MDM 下发）。
+    </p>
+
+    <h2>四、限制与坑</h2>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>坑</th><th>表现</th><th>依据</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>non-Meraki peer 三个硬限制</strong></td>
+            <td>只支持 preshared key（不支持证书）；只在 primary uplink 建隧道（不走 secondary）；peer 是 organization-wide，<strong>多台 MX 共用同一 shared secret</strong></td>
+            <td>p.533、p.537</td>
+          </tr>
+          <tr>
+            <td><strong>VPN 防火墙规则方向反直觉</strong></td>
+            <td>outbound 且 organization-wide；要拒绝到某子网的流量，得把该子网写进 Source（实为阻断回程）</td>
+            <td>p.538</td>
+          </tr>
+          <tr>
+            <td><strong>AnyConnect 与 No NAT 冲突</strong></td>
+            <td>不能与 NAT exceptions（No NAT）启用在同一 WAN uplink 上</td>
+            <td>p.552</td>
+          </tr>
+          <tr>
+            <td><strong>AnyConnect 不支持蜂窝</strong></td>
+            <td>不支持 cellular 接口；需经蜂窝建 VPN 时要加 MG cellular gateway 并用 IP Passthrough</td>
+            <td>p.552</td>
+          </tr>
+          <tr>
+            <td><strong>固件版本门槛不一致</strong></td>
+            <td>整体 ≥16.16，但 MX64(W)/MX65(W) 要 ≥17.6；IPv6 Prefix 要 ≥18.104</td>
+            <td>p.554、p.556</td>
+          </tr>
+          <tr>
+            <td><strong>Sentry VPN 只支持 Client VPN</strong></td>
+            <td>认证必须是 Meraki Cloud Authentication，且<strong>不支持 AnyConnect VPN</strong>；用 AnyConnect 时应改用 Systems Manager profile 里的 VPN settings payload</td>
+            <td>p.548</td>
+          </tr>
+          <tr>
+            <td><strong>vMX 能力残缺</strong></td>
+            <td>不支持 AMP、IDS/IPS、Geo IP L7 规则、802.1X 端口认证、Splash page、双 WAN 或 LAN 口</td>
+            <td>p.563</td>
+          </tr>
+          <tr>
+            <td><strong>vMX-XL 限制更多</strong></td>
+            <td>beta，仅 AWS；不支持 Client VPN、AnyConnect VPN、BGP/OSPF、NAT mode，IPv6 为 N/A</td>
+            <td>p.573</td>
+          </tr>
+          <tr>
+            <td><strong>vMX 平台约束</strong></td>
+            <td>当前不能在 VMware 上跑（规划支持 AWS Outposts / VMware / KVM）；每个实例都要 license，AWS 侧另有存储与计算费用；Azure 的 RouteServer/vWAN 为 coming soon</td>
+            <td>p.564、p.565</td>
+          </tr>
+          <tr>
+            <td><strong>token 1 小时过期</strong></td>
+            <td>vMX 的 Authentication Token 生成后 1 小时内必须使用，超时重来</td>
+            <td>p.566-586</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2>五、面试问答</h2>
+
+    <h3>Q1：Auto VPN 是怎么做到「零配置」的？流量会经过 Meraki 云吗？</h3>
+    <div class="card">
+      <p><strong>一句话：</strong>Dashboard / VPN Registry 只负责注册、下发对端信息和「双向各一个 16 字符密钥」（NexTunnel / TCP 443），
+      隧道随后由 MX 之间直接建立并自动传播路由——<strong>数据面不绕云</strong>（p.528）。</p>
+      <p style="margin-bottom:0"><strong>可展开：</strong>所以管理员只选 VPN 类型 + 勾子网；
+      代价是新建隧道与配置变更依赖云端可用性，且云账户的安全等级等于全网 VPN 的安全等级
+      （这条是我基于机制的推论，回答时说明「推论」更稳）。</p>
+    </div>
+
+    <h3>Q2：hub-and-spoke 还是 full mesh？</h3>
+    <div class="card">
+      <p><strong>一句话：</strong>看分支之间的流量——绕 hub 浪费带宽就加 hub 直到 full mesh；
+      反过来规模优先就用专用 MX 作 hub（VPN Concentrator mode），隧道数最少（p.528）。</p>
+      <p style="margin-bottom:0"><strong>可展开：</strong>hub 之间会自动建立 full mesh；
+      spoke 只连 hub 且 spoke 间流量过 hub；拓扑可以逐步演进，不必一次定死。
+      回答时补一句「隧道数随站点数平方增长」能体现对成本的考虑。</p>
+    </div>
+
+    <h3>Q3：Auto VPN 和 non-Meraki peer 有什么本质区别？</h3>
+    <div class="card">
+      <p><strong>一句话：</strong>三点差异——只认 PSK 不认证书、必须 UDP 500/4500 可达、<strong>只走 primary uplink</strong>；
+      而 Auto VPN 双 WAN 都建隧道并支持 HA pair 自动 failover（p.533、p.537）。</p>
+      <p style="margin-bottom:0"><strong>可展开：</strong>non-Meraki peer 是 organization-wide 的，多台 MX 共用同一 shared secret，
+      这既是便利也是风险（一台泄露等于全体泄露）。</p>
+    </div>
+
+    <h3>Q4：Client VPN 和 AnyConnect 怎么选？</h3>
+    <div class="card">
+      <p><strong>一句话：</strong>Client VPN 是 L2TP + 3DES/SHA1、任意 license 可用、无 split tunnel、可被 Sentry VPN 免配置推送；
+      AnyConnect 是 TLS/DTLS + AES-256、支持 SAML 与按域名分流、需额外 licence（p.541）。</p>
+      <p style="margin-bottom:0"><strong>可展开：</strong>Cisco 推荐用 AnyConnect。
+      如果被问「为什么还留着 Client VPN」，答案是零成本 + 系统自带客户端 + 可配合 Sentry 做零干预接入。</p>
+    </div>
+
+    <h3>Q5：为什么 vMX 不能替代本地 MX 做完整安全出口？</h3>
+    <div class="card">
+      <p><strong>一句话：</strong>vMX 不支持 AMP、IDS/IPS、Geo IP L7 规则、802.1X 端口认证、双 WAN 与 LAN 口（p.563）——
+      它的定位是组网，不是完整安全栈。</p>
+      <p style="margin-bottom:0"><strong>可展开：</strong>所以云上流量的安全检查要在架构上另找落点
+      （比如出云流量引到 Secure Connect 或本地 MX 做检查），不能默认「有 vMX 就有 IPS」。</p>
+    </div>
+
+    <h3>Q6：VPN 隧道通了，但访问不了对端某个子网，怎么查？</h3>
+    <div class="card">
+      <p><strong>一句话：</strong>按 <strong>隧道 → 通告 → 路由 → 连通性</strong> 四步走：
+      VPN Status 是否 Up、Exported Subnets 是否通告了该网段、Route Table 是否学到、Tools &gt; Ping 是否通（p.530-532）。</p>
+      <p style="margin-bottom:0"><strong>可展开：</strong>第四步不通时再检查 site-to-site 防火墙规则——
+      注意它是 <strong>outbound 且 organization-wide</strong>，且要阻断某子网得写进 Source（p.538）。
+      如果是第三方对端，还要确认 UDP 500/4500 可达且只用了 primary uplink。</p>
+    </div>
+
+    <div class="callout info">
+      <span class="ico">i</span>
+      <div>
+        <p><strong>本章要记住的那条分界线：</strong>
+        <strong>控制面在云（注册、对端信息、密钥），数据面在设备（MX 之间直连）。</strong>
+        所有「零配置」的好处来自前者，所有「依赖云」的风险也来自前者；
+        所有性能优势来自后者，所有「加密参数不可调」的约束也来自后者。</p>
+      </div>
+    </div>
+
+    <div class="pager">
+      <a href="deep-ch08-lan.html">
+        <span class="dir">上一章</span>
+        <span class="ttl">Ch8 LAN 分段与准入</span>
+      </a>
+      <a class="next" href="deep-ch10-traffic.html">
+        <span class="dir">下一章</span>
+        <span class="ttl">Ch10 流量安全与 SASE →</span>
+      </a>
+    </div>
+  </article>
+
+  <footer>
+    <p>Cisco Meraki 企业网络安全 · 深度精读<br>
+    依据《Securing Enterprise Networks with Cisco Meraki》第 9 章（第 527–591 页）· 标注「推论」处为机制推演</p>
+  </footer>
+  </main>
+</div>
+
+<div id="overlay"></div>
+<script src="../assets/app.js"></script>
+</body>
+</html>

@@ -1,0 +1,648 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ch8 LAN 分段与准入：机制拆解 | Meraki 安全精读</title>
+<meta name="description" content="第 8 章深度精读：VLAN / Group Policy / Adaptive Policy(SGT) 三种分段粒度的取舍、stateless ACL 的后果、DAI 与 rogue DHCP 防护机制、WPA3 192-bit 密码学参数。">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<div id="progress"></div>
+
+<header class="topbar">
+  <button class="menu-btn" aria-label="打开目录">☰</button>
+  <a class="brand" href="../index.html">
+    <span class="dot"></span>
+    Meraki 安全精读
+    <small>Securing Enterprise Networks</small>
+  </a>
+  <span class="topbar-spacer"></span>
+  <a class="topbar-link hide-sm" href="deep-ch07-identity.html">上一章 Ch7</a>
+  <a class="topbar-link" href="../index.html#chapters">章节</a>
+</header>
+
+<div class="layout">
+
+  <nav class="sidebar">
+    <div class="side-group-title">深度精读</div>
+    <a href="../index.html"><span class="num">00</span>总览与路线</a>
+    <a href="deep-ch07-identity.html"><span class="num">07</span>身份与认证</a>
+    <a class="active" href="deep-ch08-lan.html"><span class="num">08</span>LAN 分段与准入</a>
+    <a href="deep-ch09-wan.html"><span class="num">09</span>WAN 与 Auto VPN</a>
+    <a href="deep-ch10-traffic.html"><span class="num">10</span>流量安全与 SASE</a>
+    <div class="side-group-title">细节与背景</div>
+    <a href="tech-details.html"><span class="num">★</span>参数总库</a>
+    <a href="ch02-frameworks.html"><span class="num">02</span>安全框架</a>
+    <a href="ch05-admin-access-details.html"><span class="num">05</span>管理员访问</a>
+    <a href="tech-ch06-ch07.html"><span class="num">6-7</span>细节清单</a>
+    <a href="tech-ch08-ch09.html"><span class="num">8-9</span>细节清单</a>
+    <a href="tech-ch10-ch12.html"><span class="num">10-12</span>细节清单</a>
+  </nav>
+
+  <main>
+  <article class="content">
+
+    <div class="chapter-head">
+      <div class="eyebrow">第 8 章 · 深度精读</div>
+      <h1>LAN 分段与准入：从 VLAN 到 SGT 的三层粒度</h1>
+      <p class="subtitle">
+        这一章是全书篇幅最大、配置细节最密的一章。核心问题只有一个：
+        怎么把「谁能跟谁通信」这件事表达清楚——用 VLAN 表达是粗粒度，
+        用 Group Policy 表达是按身份，用 SGT 表达才能做到同网段内的微隔离。
+      </p>
+      <div class="meta-row">
+        <span class="chip strong">技术密度：极高</span>
+        <span class="chip">篇幅最大：143 页</span>
+        <span class="chip">面试高频：分段 / stateless ACL / SGT</span>
+      </div>
+    </div>
+
+    <div class="callout info">
+      <span class="ico">i</span>
+      <div>
+        <p><strong>标注约定：</strong><code>（p.xx）</code> 为书中原文位置；<code>（推论）</code> 为基于机制的推演，书里没明说。
+        书中未涉及的部分直接标「书中未涉及」——本章有几处常见的说法（比如 WPA2/WPA3 四次握手对比）
+        书里其实没有讲，我不会替它补。</p>
+      </div>
+    </div>
+
+    <h2>一、设计理念：三种粒度，各管一段</h2>
+
+    <p>
+      Meraki 在 LAN 侧给了三套表达方式，很多人把它们混着用，结果策略互相打架。
+      理解它们各自解决什么、在哪一层执行，是这一章最重要的事。
+    </p>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>手段</th><th>粒度</th><th>在哪执行</th><th>能解决</th><th>解决不了</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>VLAN</strong></td>
+            <td>整个广播域</td>
+            <td>全链路（需要每台设备透传）</td>
+            <td>广播域隔离、按物理位置划片</td>
+            <td>同 VLAN 内互访；频繁变更（改一次要动全线）</td>
+          </tr>
+          <tr>
+            <td><strong>Group Policy</strong></td>
+            <td>按客户端身份</td>
+            <td>交换机 / AP / MX</td>
+            <td>同一 SSID 或同一端口，按身份落到<strong>不同 VLAN + 不同 L3/L7 策略</strong></td>
+            <td>同一 VLAN 内的主机互访（p.517）</td>
+          </tr>
+          <tr>
+            <td><strong>Adaptive Policy（SGT）</strong></td>
+            <td>按标签，可跨网段</td>
+            <td>egress（交换机侧强制）</td>
+            <td><strong>同网段内微隔离</strong>、跨 WAN 保持标签</td>
+            <td>强制点<strong>不在 MX 上</strong>（p.510）</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>1.1 为什么需要 Group Policy：一个真实约束</h3>
+
+    <p>
+      书里给的动机很具体（p.475）：小型零售门店需要<strong>隔离卡支付流量</strong>，
+      但不能改变用户的操作方式。传统做法是「一个场景一个 VLAN / 一个 SSID」，
+      结果是 SSID 越堆越多、用户选错网络。Group Policy 的做法是
+      <strong>一个 SSID 按组下发不同 VLAN</strong>，把拆分从「用户要选」变成「策略自动决定」。
+    </p>
+
+    <p>
+      这条设计正好对应 NIST 800-53 的 <code>AC-4(21)</code>——信息流分离。
+      注意这里是<strong>合规要求驱动了功能设计</strong>，不是反过来。
+    </p>
+
+    <div class="callout warn">
+      <span class="ico">!</span>
+      <div>
+        <p><strong>部署形态会影响能力上限：</strong>Group Policy 只在 <strong>network 级</strong>配置，且没有默认策略。
+        官方建议部署完整的 Meraki stack（Wi-Fi + switching + MX）以获得最广能力，
+        因为各平台支持的特性差异很大——例如 <strong>MS 不支持 VLAN tagging / scheduling / L7 规则</strong>（p.475-476）。</p>
+      </div>
+    </div>
+
+    <h3>1.2 为什么无线侧把防火墙放在 AP 上</h3>
+
+    <p>
+      作者对 MR 上直接做 firewall 的评价是 <em>quite unique</em>（p.384）。
+      动机是：<strong>在基础设施很少的场景下也能获得细粒度控制</strong>——
+      一个只有几台 AP、没有本地 MX 的小办公室，也能在 AP 上拦住到内网的流量。
+    </p>
+
+    <p>
+      MR 的默认策略也体现了这个定位（p.389）：<strong>拒绝到 local LAN（RFC 1918 网段），放行其他</strong>。
+      这正好适配 Guest Wi-Fi 场景——访客不能碰内网，但能上网；
+      而 VLAN 之间的管控继续交给本地 MX。
+    </p>
+
+    <h3>1.3 端口安全：来自合规的一条硬要求</h3>
+
+    <p>
+      端口安全特性的动机在书里指向 <code>NIST 800-53 9.2.2</code>：
+      限制公共可达的网络插口（p.393）。典型场景是机房走廊的 IP 电话口、机场和商场里已布线但未使用的面板。
+      书里的建议很直接：<strong>端口没有正当用途就直接 disable</strong>。
+    </p>
+
+    <h3>1.4 Port isolation：为「只该上网」的设备准备</h3>
+
+    <p>
+      定位是额外一层防护（p.399），三个典型场景：
+      只应访问 Internet 的设备（书里举例 Meraki MV 摄像头）、IoT 同 VLAN 内防横向移动、DMZ。
+      共同特征是——<strong>同 VLAN 是因为功能或安全级别相同，但并不需要 east-west 通信</strong>。
+    </p>
+
+    <h3>1.5 SecurePort：把基础设施也纳入零信任</h3>
+
+    <p>
+      设计意图是让 AP 这类基础设施设备也走「验证后才能接入」的流程，
+      用的是<strong>既有的硬件信任模型</strong>而非证书（p.402）。
+      运维收益很实际：<strong>无需管理证书，也无需手工配置 AP 所在的交换端口</strong>。
+    </p>
+
+    <h3>1.6 合规驱动的功能清单</h3>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>功能</th><th>对应要求</th><th>依据</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>WPA3（含 192-bit 模式）</td><td>PCI DSS 4.0 <code>4.2.1.2</code>：认证与传输必须使用强加密</td><td>p.520-522</td></tr>
+          <tr><td>Air Marshal</td><td><code>11.2.1</code>：定期发现并区分授权 / 未授权 AP</td><td>p.521</td></tr>
+          <tr><td>RF profiles 与天线选择</td><td>NIST <code>AC-18(5)</code>：限制组织边界外的无线使用</td><td>p.522</td></tr>
+          <tr><td>端口安全</td><td>NIST <code>9.2.2</code>：限制公共可达插口</td><td>p.393</td></tr>
+          <tr><td>Group Policy</td><td>NIST <code>AC-4(21)</code>：信息流分离</td><td>p.475</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2>二、机制拆解：包在哪一层被判断</h2>
+
+    <h3>2.1 stateless ACL 到底意味着什么</h3>
+
+    <p>
+      Meraki 有线侧的默认状态是「switches 默认 allow all + stateless ACL」，书里明说这属于基本功能（p.384-385）。
+      <strong>stateless</strong> 的含义是：设备不维护会话表，每条规则独立匹配单个方向的报文。
+    </p>
+
+    <p>
+      直接后果是——<strong>如果你写了一条 <code>deny any</code>，就必须另写一条规则显式放行回程流量</strong>（p.385）。
+      书里用 packet capture 验证了这一点：只有 <code>echo request</code> 到达，<code>echo reply</code> 被丢掉（p.389-390）。
+    </p>
+
+    <div class="callout tip">
+      <span class="ico">◆</span>
+      <div>
+        <p><strong>面试可直接引用：</strong>「Meraki 的 ACL 和 MR 防火墙都是 stateless，
+        deny 之后回程要显式放行，验证方式是抓包看只有单向流量。」
+        这句话能同时证明你配过、也排过。</p>
+      </div>
+    </div>
+
+    <h3>2.2 MR 最容易踩的一个坑：L3 放行后不再过 L7</h3>
+
+    <p>
+      这是本章专门加 Note 强调的反直觉之处（p.389）：
+      <strong>被非默认 L3 规则 permit 的流，不会再次被 L7 规则评估</strong>。
+      而 MX 会在 L7 阶段重新评估。
+    </p>
+
+    <p>
+      <strong>（推论）</strong>这意味着同样的策略意图，在 MX 上写和在 MR 上写，结果可能相反：
+      你在 MR 上先写了一条宽松的 L3 permit，再精心配的 L7 应用封禁可能<strong>根本不生效</strong>。
+      迁移策略时不能照搬。
+    </p>
+
+    <h3>2.3 NBAR：L7 识别是怎么做到的</h3>
+
+    <p>
+      MR 的 L7 依赖 <strong>NBAR</strong>（p.391-392），条件是 <strong>Wi-Fi 6 及以后的 AP + MR27 以上固件</strong>，
+      可识别 <strong>1500+ 应用</strong>。匹配维度可以是内容类别、HTTP hostname、端口、远端 IP 段，或它们的组合。
+    </p>
+
+    <p>
+      但有一个体验缺陷（p.391）：<strong>L7 封 HTTPS 站点不会给用户 block page</strong>。
+      用户看到的是连接被重置。想要友好提示页，得依赖 Secure Connect。
+    </p>
+
+    <h3>2.4 SGT：把标签贴进报文里</h3>
+
+    <p>
+      书里用了一个很好的类比（p.492）：SGT 类似 <strong>QoS marking 或 MPLS label</strong>——
+      通常贴近源端打标，后续每一跳只看标签快速查表决定处理方式，<strong>不做逐包深度检查</strong>。
+    </p>
+
+    <p>
+      技术实现上，SGT 被加入报文的 <strong>IP header</strong>，封装在 EtherType
+      <code>Cisco MetaData (CMD)</code> 内（p.492）。
+    </p>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>打标方式</th><th>位置</th><th>限制</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>SSID 静态指定 adaptive policy group</td><td>Wireless 配置</td><td><strong>仅限启用 RADIUS 的 SSID</strong></td></tr>
+          <tr><td>Switch port 静态指定 adaptive policy group</td><td>Switching 配置</td><td>—</td></tr>
+          <tr><td>Cisco ISE 在 802.1X 授权结果中动态下发 Security Group</td><td>RADIUS 授权</td><td>需要 ISE 与 802.1X 全链路就绪</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p style="font-size:.9rem;color:var(--text-dim)">依据：p.493-508</p>
+
+    <p>
+      几个必须一起记住的配套条件：
+    </p>
+    <ul>
+      <li>交换机侧要把上联口和 AP 口设为 <strong>Peer SGT Capable</strong>，否则标签传不出去（p.493-508）</li>
+      <li><strong>SGT 2 是内置的 Infrastructure 专用标签</strong>，不要占用（p.493-508）</li>
+      <li>策略在 <strong>organization 级</strong>配置，规则基于 SGT 而非 IP，在 <strong>egress</strong> 执行——检查源/目的标签后 allow 或 deny（p.510）</li>
+      <li><strong>默认 adaptive policy 放行所有流量</strong>，也就是说开了功能不等于有策略（p.510）</li>
+      <li>SGT 的<strong>强制点目前不在 MX 本身</strong>，所以建议客户端都接交换机或 AP（p.510）</li>
+      <li>跨 WAN 可保持标签：MX 在 <strong>Routed 模式 Auto VPN</strong> 下可 preserve / propagate SGT；但 LAN 口与 VPN 上的 SGT 传播<strong>默认关闭</strong>，需手工开启（p.494）</li>
+    </ul>
+
+    <h3>2.5 Group Policy 的分配方式是有平台差异的</h3>
+
+    <p>
+      这一点在选型时经常被忽略——同一个「Group Policy」，在不同平台上支持的分配维度并不一样（p.479）：
+    </p>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>分配方式</th><th>MR</th><th>MS</th><th>MX</th><th>备注</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>by device type</td><td>支持</td><td>—</td><td>—</td><td>仅 AP</td></tr>
+          <tr><td>by VLAN</td><td>—</td><td>—</td><td>支持</td><td>仅 MX</td></tr>
+          <tr><td>by AD group</td><td colspan="3">支持，但<strong>需要 Advanced Security License</strong></td><td>—</td></tr>
+          <tr><td>by client</td><td colspan="3">MS 不支持 by client / by VLAN</td><td>按 MAC 识别，见下方坑</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>2.6 DAI：用 DHCP 表校验 ARP</h3>
+
+    <p>
+      <strong>DAI（Dynamic ARP Inspection）</strong>的机制（p.404-405）：
+      交换机为每个端口维护 trust 状态，对 <strong>untrusted 端口</strong>上的 ARP 报文与
+      <strong>DHCP snooping 表</strong>做比对，不符即丢弃，从而避免 ARP cache 被改写。
+    </p>
+
+    <p>
+      默认<strong>所有端口都是 untrusted</strong>；书里建议只把上联口和静态 IP 设备所在端口设为 trusted。
+      它拦的是 ARP 投毒型中间人攻击——攻击者冒充网关，把流量引到自己身上。
+    </p>
+
+    <h3>2.7 Rogue DHCP：一张允许清单</h3>
+
+    <p>
+      机制（p.408-410）：Dashboard 会记录网络中<strong>出现过的 DHCP server 列表</strong>；
+      把策略设为 <code>IPv4 Default Policy = Block DHCP Servers</code>，
+      再把合法 server 的 MAC 放进 <code>Allowed DHCPv4 Servers</code>。
+      未知 server 的响应被丢弃，并产生 <code>DHCP Blocked</code> 事件。IPv6 逻辑相同。
+    </p>
+
+    <p>
+      靠一张 MAC 允许清单就挡住了「随便插一台 DHCP 就能把整个子网搞瘫」这类事故，成本极低、收益极高。
+    </p>
+
+    <h3>2.8 SecurePort：一条四步的信任链</h3>
+
+    <p>
+      AP 首次接入时（p.402），流程是：
+    </p>
+    <ol class="keypoints">
+      <li>端口<strong>只放通到 Meraki Dashboard 的流量</strong>——先把「找妈妈」的路留出来</li>
+      <li>AP 下载证书与配置</li>
+      <li>AP 发起 802.1X，交换机拿证书向 Meraki Cloud 校验，并确认<strong>与自己在同一 organization</strong></li>
+      <li>端口自动放开</li>
+    </ol>
+    <p>
+      如果换成非 Meraki 设备插上去，端口回到初始配置——不会因为「有人插了台交换机」就把网络打开。
+      这是把基础设施接入也纳入零信任的典型做法。
+    </p>
+
+    <h3>2.9 Port isolation：只在本机生效的二层隔离</h3>
+
+    <p>
+      机制是阻止<strong>同一交换机、同一 VLAN 内</strong>的设备互访（p.399-400）。三个限制必须一起记：
+    </p>
+    <ul>
+      <li>只在<strong>本交换机</strong>生效，跨交换机无效</li>
+      <li>跨交换机场景需要把 <strong>downlink 口和所有 host 口都设 isolation</strong></li>
+      <li><strong>绝不能把 northbound uplink 设成 isolation</strong>，否则主机根本出不了交换机</li>
+    </ul>
+
+    <h3>2.10 WPA3 192-bit：具体用了哪些算法</h3>
+
+    <p>
+      这是全书少见的、把密码学套件写清楚的地方（p.520-521）：
+    </p>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>环节</th><th>算法</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>认证（EAP-TLS）</td><td><strong>ECDH</strong> 与 <strong>ECDSA</strong>，384-bit 椭圆曲线</td></tr>
+          <tr><td>加密</td><td><strong>GCMP-256</strong></td></tr>
+          <tr><td>密钥派生与确认</td><td><strong>HMAC-SHA384</strong></td></tr>
+          <tr><td>管理帧保护</td><td><strong>BIP-GMAC-256</strong></td></tr>
+          <tr><td>硬件要求</td><td>802.11ac Wave-2 及以上 + MR27 以上固件</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>
+      <strong>书中未涉及</strong> WPA2 与 WPA3 的四次握手差异、SAE 与 PSK 的对比。
+      这部分属于协议层知识，书里只给了上面这套套件参数。
+    </p>
+
+    <h3>2.11 Air Marshal：WIDS/WIPS 的代价</h3>
+
+    <p>
+      告警分三类（p.521）：
+    </p>
+    <ul>
+      <li>接入网络的 <strong>rogue AP</strong></li>
+      <li><strong>伪造你的 SSID 或 AP</strong> 的设备（钓鱼热点）</li>
+      <li><strong>恶意广播与 packet flood</strong></li>
+    </ul>
+
+    <p>
+      该功能<strong>默认启用</strong>。但有一个性能代价必须知道：
+      <strong>没有专用扫描 radio 的 AP，必须短暂 off-channel 才能扫描，而 off-channel 期间无法服务客户端</strong>。
+      所以书里推荐使用带专用扫描 radio 的型号以保住性能。
+    </p>
+
+    <p>
+      <strong>书中未涉及</strong> containment 的具体动作（例如是否发 deauth 帧），
+      也未给出 rogue AP 的判定算法——只给了「接入网络 / 伪造 SSID」这两类依据。
+    </p>
+
+    <h2>三、书中的实验</h2>
+
+    <h3>3.1 SGT 微隔离：同网段互 ping 失败是怎么做到的</h3>
+
+    <p>
+      这是本章最能说明问题的一个实验（p.511-519）。布景：
+    </p>
+    <ul>
+      <li>Staff 笔记本 <code>192.168.168.8</code>，SGT <strong>10</strong></li>
+      <li>POS 终端 <code>192.168.168.7</code>，SGT <strong>20</strong>（与 Staff <strong>同一网段</strong>）</li>
+      <li>另一端站点的 POS server <code>192.168.98.2</code>，SGT <strong>20</strong></li>
+    </ul>
+
+    <p>
+      adaptive policy 设 <strong>Staff → POS = Deny</strong>，结果：
+    </p>
+    <ul>
+      <li>同网段内互 ping <strong>失败</strong>——这是 VLAN 方案做不到的</li>
+      <li>跨 WAN 到 POS server 也<strong>失败</strong>——标签跟着隧道传过去了</li>
+      <li>但两端各自<strong>网关正常</strong>、POS 终端 → POS server 通信<strong>正常</strong>——策略只精确命中 Staff→POS 这一对</li>
+      <li>packet capture 显示<strong>单向 ICMP</strong>，证明是 egress 丢包</li>
+    </ul>
+
+    <p>
+      这个实验同时证明了三件事：微隔离可行、跨 WAN 标签可保持、丢包点是 egress。
+      面试里如果被问「怎么在同一网段里做隔离」，这就是标准答案的具体化。
+    </p>
+
+    <h3>3.2 Group Policy：同一个 SSID 换 VLAN</h3>
+
+    <p>
+      建一个 Staff group policy，<code>Wireless Only</code> 指定 <strong>VLAN 127</strong>，
+      并加一条 L7 规则封 eBay。分配到客户端后，Clients 页显示该客户端 VLAN 由 <strong>130 变为 127</strong>，
+      同时 <code>www.ebay.com</code> 打不开（p.478-482）。
+    </p>
+
+    <p>
+      注意这里同时改了两件事：<strong>二层归属（VLAN）和七层策略（L7 规则）</strong>——
+      这正是 Group Policy 存在的意义：一次分配，同时决定「在哪个网段」和「能访问什么」。
+    </p>
+
+    <h3>3.3 Rogue DHCP：一条事件日志定位到端口</h3>
+
+    <p>
+      IPv4 由直连 MS 的 MX 提供。策略设为 <code>Block DHCP Servers</code> 并允许合法 MAC 后，
+      在 rogue server 同 VLAN 的客户端上执行 <code>ipconfig /release</code> + <code>/renew</code>，
+      事件日志出现 <code>DHCP Blocked</code>，点 Client 列的 MAC 就能定位到
+      「Bondi 分支 Bondi-G-MS120-1 的 port 4」（p.408-410）。
+    </p>
+
+    <p>
+      这个例子的价值不在配置，而在<strong>可观测性</strong>：
+      拦截动作直接产出一条带端口位置的事件，而不是让运维去猜谁的网段出了问题。
+    </p>
+
+    <h3>3.4 Port isolation：两台摄像头</h3>
+
+    <p>
+      两台同网段的 Meraki MV 摄像头（<code>192.168.200.2</code> / <code>192.168.200.6</code>），
+      启用 isolation 后，前者<strong>仍能 ping 8.8.8.8</strong>，但 <strong>ping 同网段另一台失败</strong>（p.401）。
+      一个配置同时达成了「能上网」和「不能横向移动」。
+    </p>
+
+    <h3>3.5 EAP-TLS 全流程：把 PKI 的成本压到最低</h3>
+
+    <p>
+      EAP-TLS 的门槛一直是证书管理，书里的做法是用 ISE 当 CA 加 Systems Manager 自动推送（p.429-446）：
+    </p>
+    <ol class="keypoints">
+      <li>ISE 身份源序列勾 <code>Certificate Based Authentication</code></li>
+      <li>复制 Allowed Protocols 为 <code>EAP-TLS and PEAP Only</code>，设 <code>Preferred EAP Protocol = EAP-TLS</code></li>
+      <li>在 policy set 插入 EAP-TLS 规则并绑定 <code>Certificate_Request_Sequence</code></li>
+      <li>用 <code>Certificate Provisioning Portal</code> 签发用户证书，导出 ISE EAP CA 证书</li>
+      <li>由 Systems Manager 推送证书 + Wi-Fi/Ethernet profile</li>
+    </ol>
+    <p>
+      客户端最终显示 <code>Authenticated via EAP-TLS</code>。整套下来用户零操作，
+      这就是「双向证书认证在 Meraki 上可以工程化落地」的证明。
+    </p>
+
+    <h3>3.6 Sentry Wi-Fi / Sentry LAN：把 EAP-TLS 简化成打 tag</h3>
+
+    <p>
+      书中给了两条路（p.447-457）：
+      SSID 侧选 <code>Enterprise With</code> + <code>Meraki Cloud Authentication</code>，
+      然后 <code>Add Sentry Network</code> 按 Scope/Tags 匹配 Systems Manager 设备；
+      有线侧建 <code>Access Policy = Meraki Authentication</code> +
+      <code>Systems Manager Sentry Security</code>（按 tag scope），再套到端口。
+    </p>
+
+    <p>
+      用户<strong>不用输账号密码</strong>，只需点 OK 选证书即以 EAP-TLS 上线。
+      作者的判断是：证书与 CA 都由 SM 自动下发后，<strong>任何规模的网络都没理由再不做双向 802.1X</strong>（p.457）。
+    </p>
+
+    <div class="callout warn">
+      <span class="ico">!</span>
+      <div>
+        <p><strong>但这功能要谨慎对待：</strong>书中自称 <strong>Sentry LAN 属于 undocumented feature</strong>，
+        需要自行验证（示例环境 macOS 14.5 + MS120 16.7）。上生产前必须自己压测（p.451）。</p>
+      </div>
+    </div>
+
+    <h2>四、限制与坑</h2>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>坑</th><th>表现</th><th>依据</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>MR 的 L3 permit 会绕过 L7</strong></td>
+            <td>非默认 L3 规则放行的流不再被 L7 评估；MX 则会重新评估。同策略跨平台结果不同</td>
+            <td>p.389</td>
+          </tr>
+          <tr>
+            <td><strong>L7 封 HTTPS 无 block page</strong></td>
+            <td>用户看到连接被重置；要友好提示需 Secure Connect</td>
+            <td>p.391</td>
+          </tr>
+          <tr>
+            <td><strong>Port isolation 只本机生效</strong></td>
+            <td>跨交换机必须把 downlink 和所有 host 口一起设；uplink 绝不能设，否则主机出不去</td>
+            <td>p.400</td>
+          </tr>
+          <tr>
+            <td><strong>Group Policy 按 MAC 识别客户端</strong></td>
+            <td>手工在 Clients 页套策略不可扩展到企业：iOS/Android 的 MAC randomization 一换 MAC 就要重配</td>
+            <td>p.480</td>
+          </tr>
+          <tr>
+            <td><strong>Sentry LAN 未文档化</strong></td>
+            <td>书中自称 undocumented feature，需自行验证；另有官方文档称 group policy 不能经 Sentry policy 分配给有线客户端，但作者实测可以</td>
+            <td>p.451、p.479</td>
+          </tr>
+          <tr>
+            <td><strong>SGT 前提很苛刻</strong></td>
+            <td>全链路基础设施都要支持且要高级授权；MS 仅 MS390/C9300-M 系列特定固件支持；MX84 因硬件限制不支持；强制点不在 MX；ISE 同步目前是单向（SGT + policies + SGACL）</td>
+            <td>p.492、p.510</td>
+          </tr>
+          <tr>
+            <td><strong>MAB 只能当最后手段</strong></td>
+            <td>MAC 易伪造；iOS 的 Private Wi-Fi Address 默认开启会换 MAC 导致 MAB 失效，测试前要关掉</td>
+            <td>p.458、p.469</td>
+          </tr>
+          <tr>
+            <td><strong>本地状态页仍可访问</strong></td>
+            <td>禁用后仍能在物理管理口上访问，所以即使 disable 也必须设强密码；AP 通过 Wi-Fi 取状态页</td>
+            <td>p.413</td>
+          </tr>
+          <tr>
+            <td><strong>只做 IPv4 控制不够</strong></td>
+            <td>IPv4-only 的控制项在跑 IPv6 的网络里无效（很多 OS 双栈优先 IPv6），控制项要同时考虑 IPv6</td>
+            <td>p.384</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h2>五、面试问答</h2>
+
+    <h3>Q1：要在同一个网段里隔离两台主机，怎么做？</h3>
+    <div class="card">
+      <p><strong>一句话：</strong>VLAN 做不到，要用 Adaptive Policy + SGT——标签贴在报文的 IP header 里（CMD EtherType），
+      策略在 egress 按源/目的标签放行或拒绝（p.492、p.510）。</p>
+      <p style="margin-bottom:0"><strong>可展开：</strong>打标可在 SSID、交换机端口静态指定，或由 ISE 在 802.1X 授权结果里动态下发；
+      上联口与 AP 口要设 Peer SGT Capable 才能透传；SGT 2 是内置 Infrastructure 标签；
+      默认 adaptive policy 放行所有流量，所以开了功能还得写策略；强制点不在 MX。</p>
+    </div>
+
+    <h3>Q2：VLAN、Group Policy、SGT 该怎么选？</h3>
+    <div class="card">
+      <p><strong>一句话：</strong>VLAN 划广播域，Group Policy 按身份决定「落哪个 VLAN + 什么策略」，
+      SGT 解决同 VLAN 内的微隔离（p.475、p.510、p.517）。</p>
+      <p style="margin-bottom:0"><strong>可展开：</strong>判断标准是「隔离边界是否与网段边界重合」。
+      重合就用 VLAN；不重合但能接受换网段就用 Group Policy；
+      完全不重合又必须同网段（比如同一台服务器的不同服务、POS 与办公终端同段）就只能上 SGT。
+      代价是 SGT 对硬件和授权要求最苛刻。</p>
+    </div>
+
+    <h3>Q3：stateless ACL 会带来什么问题？</h3>
+    <div class="card">
+      <p><strong>一句话：</strong>不维护会话表，所以 <code>deny any</code> 之后回程流量也要显式放行；
+      验证方式是抓包看到只有单向报文（p.385、p.389-390）。</p>
+      <p style="margin-bottom:0"><strong>可展开：</strong>这会影响规则编写习惯——写规则时要成对思考方向；
+      排障时「ping 不通但规则没拦」往往就是只放行了去程。组策略与无线防火墙里的 L3/L7 同样是 stateless。</p>
+    </div>
+
+    <h3>Q4：DAI 和 Rogue DHCP 防护分别防什么？</h3>
+    <div class="card">
+      <p><strong>一句话：</strong>DAI 用 DHCP snooping 表校验 untrusted 端口上的 ARP，拦 ARP 投毒型 MITM；
+      Rogue DHCP 只允许白名单里的 DHCP server 应答，拦「插一台 DHCP 就把子网搞瘫」（p.404、p.408）。</p>
+      <p style="margin-bottom:0"><strong>可展开：</strong>两者都依赖 DHCP snooping 建立的信任表；
+      DAI 默认所有端口 untrusted，只把上联和静态 IP 设备口设 trusted；
+      Rogue DHCP 的拦截会产出带端口位置的 <code>DHCP Blocked</code> 事件，这点在排障时很有用。</p>
+    </div>
+
+    <h3>Q5：SecurePort 是什么？为什么不用证书？</h3>
+    <div class="card">
+      <p><strong>一句话：</strong>AP 首次接入时端口只放通到 Dashboard 的流量，AP 下载证书后再做 802.1X，
+      交换机向 Meraki Cloud 校验证书并确认同 organization，然后端口自动放开（p.402）。</p>
+      <p style="margin-bottom:0"><strong>可展开：</strong>运维收益是无需管理证书、无需手工配置 AP 所在的交换端口；
+      换成非 Meraki 设备则端口回到初始配置。它用既有的硬件信任模型替代了 PKI 管理成本。</p>
+    </div>
+
+    <h3>Q6：WPA3 192-bit 模式用了什么算法？</h3>
+    <div class="card">
+      <p><strong>一句话：</strong>EAP-TLS 用 ECDH + ECDSA（384-bit 曲线），加密 GCMP-256，
+      密钥派生与确认 HMAC-SHA384，管理帧保护 BIP-GMAC-256（p.520-521）。</p>
+      <p style="margin-bottom:0"><strong>可展开：</strong>硬件要求 802.11ac Wave-2 以上 + MR27 以上固件；
+      驱动因素是 PCI DSS 4.0 <code>4.2.1.2</code> 要求认证与传输使用强加密。
+      注意书里没讲四次握手与 SAE 的细节，被追问协议层时要说明这属于 RFC 范畴。</p>
+    </div>
+
+    <h3>Q7：Air Marshal 开了有什么代价？</h3>
+    <div class="card">
+      <p><strong>一句话：</strong>没有专用扫描 radio 的 AP 必须短暂 off-channel 才能扫描，期间无法服务客户端，
+      所以要选带专用扫描 radio 的型号（p.521）。</p>
+      <p style="margin-bottom:0"><strong>可展开：</strong>它检测三类情况——接入网络的 rogue AP、伪造你 SSID 的设备、
+      恶意广播与 packet flood；默认启用；对应 PCI DSS <code>11.2.1</code> 对「定期发现并区分授权/未授权 AP」的要求。</p>
+    </div>
+
+    <div class="callout info">
+      <span class="ico">i</span>
+      <div>
+        <p><strong>本章最该记住的一句判断：</strong>
+        分段手段的选择标准不是「哪个更安全」，而是<strong>「隔离边界是否与网段边界重合」</strong>。
+        重合 → VLAN；不重合但可换网段 → Group Policy；不重合且必须同网段 → SGT。</p>
+      </div>
+    </div>
+
+    <div class="pager">
+      <a href="deep-ch07-identity.html">
+        <span class="dir">上一章</span>
+        <span class="ttl">Ch7 身份与认证</span>
+      </a>
+      <a class="next" href="deep-ch09-wan.html">
+        <span class="dir">下一章</span>
+        <span class="ttl">Ch9 WAN 与 Auto VPN →</span>
+      </a>
+    </div>
+  </article>
+
+  <footer>
+    <p>Cisco Meraki 企业网络安全 · 深度精读<br>
+    依据《Securing Enterprise Networks with Cisco Meraki》第 8 章（第 384–527 页）· 标注「推论」处为机制推演</p>
+  </footer>
+  </main>
+</div>
+
+<div id="overlay"></div>
+<script src="../assets/app.js"></script>
+</body>
+</html>

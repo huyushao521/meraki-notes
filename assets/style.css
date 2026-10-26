@@ -436,31 +436,6 @@ td code { font-size: .82em; }
   font-variant-numeric: tabular-nums;
 }
 
-/* ===== 口诀 ===== */
-.mnemonic {
-  margin: 24px 0;
-  padding: 24px 26px;
-  border-radius: var(--radius);
-  background: linear-gradient(135deg, var(--accent-soft), color-mix(in srgb, var(--surface) 70%, var(--accent-soft)));
-  border: 1px dashed color-mix(in srgb, var(--accent) 40%, transparent);
-  text-align: center;
-}
-.mnemonic .label {
-  font-size: .72rem;
-  font-weight: 700;
-  letter-spacing: .12em;
-  text-transform: uppercase;
-  color: var(--accent);
-  display: block;
-  margin-bottom: 10px;
-}
-.mnemonic .text {
-  font-size: 1.08rem;
-  font-weight: 650;
-  line-height: 1.85;
-  color: var(--text);
-}
-
 /* ===== 框架 vs 标准 对比 ===== */
 .vs {
   display: grid;
@@ -693,7 +668,6 @@ footer {
   .pager { flex-direction: column; }
   .topbar-link.hide-sm { display: none; }
   body { font-size: 15.5px; }
-  .mnemonic .text { font-size: .99rem; }
 }
 
 @media (max-width: 420px) {

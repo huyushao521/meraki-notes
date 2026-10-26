@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Cisco Meraki 企业网络安全 · 中文精读笔记</title>
-<meta name="description" content="《Securing Enterprise Networks with Cisco Meraki》中文精读笔记：重点提炼、易考点、实操配置与记忆口诀。">
+<meta name="description" content="《Securing Enterprise Networks with Cisco Meraki》中文精读笔记：核心机制拆解、设计取舍、书中实验复现、限制与坑，面向工程实践与面试准备。">
 <link rel="stylesheet" href="assets/style.css">
 </head>
 <body>
@@ -25,56 +25,55 @@
 <div class="layout">
 
   <nav class="sidebar">
-    <div class="side-group-title">笔记目录</div>
-    <a href="index.html"><span class="num">00</span>重要度地图</a>
-    <a href="notes/tech-details.html"><span class="num">★</span>技术细节总库</a>
-    <a href="notes/ch02-frameworks.html"><span class="num">02</span>安全框架与最佳实践</a>
-    <a class="soon"><span class="num">03</span>Dashboard 与云信任</a>
-    <a class="soon"><span class="num">04</span>RBAC 与最小权限</a>
-    <a href="notes/ch05-admin-access-details.html"><span class="num">05</span>管理员访问 · 实战篇</a>
-    <a class="soon"><span class="num">06</span>安全运营与日志</a>
-    <a class="soon"><span class="num">07</span>用户认证与零信任</a>
-    <a class="soon"><span class="num">08</span>有线无线 LAN 安全</a>
-    <a class="soon"><span class="num">09</span>MX 与 WAN 安全</a>
-    <a class="soon"><span class="num">10</span>用户流量安全</a>
-    <a class="soon"><span class="num">11</span>终端设备安全</a>
-    <a class="soon"><span class="num">12</span>物理安全</a>
-    <div class="side-group-title">附录</div>
-    <a class="soon"><span class="num">A</span>安全标准对照表</a>
+    <div class="side-group-title">深度精读</div>
+    <a class="active" href="index.html"><span class="num">00</span>总览与路线</a>
+    <a href="notes/deep-ch07-identity.html"><span class="num">07</span>身份与认证</a>
+    <a href="notes/deep-ch08-lan.html"><span class="num">08</span>LAN 分段与准入</a>
+    <a href="notes/deep-ch09-wan.html"><span class="num">09</span>WAN 与 Auto VPN</a>
+    <a href="notes/deep-ch10-traffic.html"><span class="num">10</span>流量安全与 SASE</a>
+    <div class="side-group-title">细节与背景</div>
+    <a href="notes/tech-details.html"><span class="num">★</span>参数总库</a>
+    <a href="notes/ch02-frameworks.html"><span class="num">02</span>安全框架</a>
+    <a href="notes/ch05-admin-access-details.html"><span class="num">05</span>管理员访问</a>
+    <a href="notes/tech-ch06-ch07.html"><span class="num">6-7</span>细节清单</a>
+    <a href="notes/tech-ch08-ch09.html"><span class="num">8-9</span>细节清单</a>
+    <a href="notes/tech-ch10-ch12.html"><span class="num">10-12</span>细节清单</a>
   </nav>
 
   <main>
     <div class="hero">
-      <div class="eyebrow">中文精读笔记 · 持续更新</div>
-      <h1>用 Meraki 把安全标准<br>一条条落地</h1>
+      <div class="eyebrow">中文精读笔记 · 面向工程实践与面试</div>
+      <h1>把 Meraki 的安全设计<br>讲清楚「为什么」</h1>
       <p class="lead">
-        基于《Securing Enterprise Networks with Cisco Meraki》整理的要点笔记。
-        只保留真正重要的内容：核心概念、决策要点、实操配置、易考点与记忆口诀。
+        基于《Securing Enterprise Networks with Cisco Meraki》。
+        只讲机制，不做应试总结：每个功能在哪一层执行、为什么这样设计、
+        书里的实验怎么验证、面试时怎么把原理讲明白。
       </p>
     </div>
 
     <div class="stat-row">
-      <div class="stat"><div class="n">13</div><div class="l">章节 + 附录</div></div>
+      <div class="stat"><div class="n">4</div><div class="l">篇深度精读</div></div>
       <div class="stat"><div class="n">9</div><div class="l">贯穿全书主题</div></div>
-      <div class="stat"><div class="n">100+</div><div class="l">条合规要求</div></div>
-      <div class="stat"><div class="n">6</div><div class="l">篇笔记已上线</div></div>
+      <div class="stat"><div class="n">100+</div><div class="l">条合规条款对照</div></div>
+      <div class="stat"><div class="n">26</div><div class="l">道面试问答</div></div>
     </div>
 
     <div class="callout tip">
       <span class="ico">◆</span>
       <div>
-        <p><strong>新增：<a href="notes/tech-details.html">技术细节总库</a></strong>　
-        把全书 12 章的配置级参数、合规条款编号（PCI DSS / NIST 800-53）、默认值对照、限制与坑汇总成速查表，
-        每条都标注了原书页码。</p>
+        <p><strong>四篇深度精读已上线</strong>　每篇结构一致：
+        <strong>设计理念 → 机制拆解 → 书中实验 → 限制与坑 → 面试问答</strong>。
+        所有事实标注原书页码，「推论」部分单独标明，书中未涉及的内容不补写。</p>
         <p style="margin-bottom:0">
-          <a href="notes/tech-ch06-ch07.html">Ch6-07 安全运营 · 用户认证</a> ·
-          <a href="notes/tech-ch08-ch09.html">Ch8-09 LAN · WAN</a> ·
-          <a href="notes/tech-ch10-ch12.html">Ch10-12 流量 · 终端 · 物理</a>
+          <a href="notes/deep-ch07-identity.html">Ch7 身份与认证</a> ·
+          <a href="notes/deep-ch08-lan.html">Ch8 LAN 分段与准入</a> ·
+          <a href="notes/deep-ch09-wan.html">Ch9 WAN 与 Auto VPN</a> ·
+          <a href="notes/deep-ch10-traffic.html">Ch10 流量安全与 SASE</a>
         </p>
       </div>
     </div>
 
-    <div class="section-title" id="importance">重要度地图 · 哪些内容真正重要</div>
+    <div class="section-title" id="importance">重要度地图 · 哪些内容技术密度最高</div>
     <div class="table-wrap">
       <table>
         <thead>
@@ -83,38 +82,38 @@
         <tbody>
           <tr>
             <td><span class="stars">★★★★★</span></td>
-            <td><strong>Ch2</strong> 安全框架</td>
-            <td>全书方法论地基：框架 vs 标准、9 大主题都出自这里，后面每章都在还这笔账</td>
-          </tr>
-          <tr>
-            <td><span class="stars">★★★★★</span></td>
-            <td><strong>Ch5</strong> 管理员访问</td>
-            <td>投入最小、收益最大的防护；凭据泄露是第 2 大入侵途径，实操密度最高</td>
-          </tr>
-          <tr>
-            <td><span class="stars">★★★★★</span></td>
             <td><strong>Ch10</strong> 用户流量安全</td>
-            <td>控制措施主战场：URL 过滤、IDS/IPS、AMP、Secure Connect、CASB、DLP</td>
+            <td>控制措施主战场，也是顺序问题最密集的一章：L3→L7→内容过滤→AMP/IPS 的本地链，DNS→Cloud Firewall→SWG→CASB→DLP 的云链</td>
           </tr>
           <tr>
-            <td><span class="stars">★★★★<span class="off">★</span></span></td>
-            <td><strong>Ch4 / Ch7 / Ch8</strong></td>
-            <td>最小权限、强认证、分段与准入——零信任的三根支柱，配置细节最多</td>
+            <td><span class="stars">★★★★★</span></td>
+            <td><strong>Ch8</strong> 有线与无线 LAN</td>
+            <td>篇幅最大（143 页），分段的三层粒度（VLAN / Group Policy / SGT）与二层防护机制都在这里</td>
+          </tr>
+          <tr>
+            <td><span class="stars">★★★★★</span></td>
+            <td><strong>Ch7</strong> 用户认证</td>
+            <td>802.1X 全链路、PEAP 与 EAP-TLS 的本质差异、ISE 默认拒绝的授权模型——面试最常追问的部分</td>
           </tr>
           <tr>
             <td><span class="stars">★★★★<span class="off">★</span></span></td>
             <td><strong>Ch9</strong> WAN 安全</td>
-            <td>加密主题的落地点：Auto VPN、vMX、云上组网</td>
+            <td>Auto VPN 控制面与数据面分离的机制，决定了它的性能优势与依赖风险</td>
+          </tr>
+          <tr>
+            <td><span class="stars">★★★★<span class="off">★</span></span></td>
+            <td><strong>Ch2 / Ch5</strong></td>
+            <td>方法论地基 + 投入产出比最高的防护；凭据泄露是第 2 大入侵途径</td>
           </tr>
           <tr>
             <td><span class="stars">★★★<span class="off">★★</span></span></td>
             <td><strong>Ch3 / Ch6 / Ch11</strong></td>
-            <td>云信任前提认知、日志监控响应、终端 MDM——重要但不需深挖每个细节</td>
+            <td>云信任前提、日志监控响应、终端 MDM——重要但不必深挖每个细节</td>
           </tr>
           <tr>
             <td><span class="stars">★★<span class="off">★★★</span></span></td>
             <td><strong>Ch1 / Ch12 / 附录</strong></td>
-            <td>背景故事、物理安全、标准对照表——按需查阅即可</td>
+            <td>背景故事、物理安全、标准对照表——按需查阅</td>
           </tr>
         </tbody>
       </table>
@@ -123,8 +122,9 @@
     <div class="callout tip">
       <span class="ico">◆</span>
       <div>
-        <p><strong>如果时间只够读三章</strong>：Ch2（为什么做）→ Ch5（怎么守门）→ Ch10（怎么控流量）。
-        这三章构成了「方法 → 入口 → 流量」的完整闭环，其余章节都是在这条主线上补细节。</p>
+        <p><strong>面试前的阅读顺序</strong>：Ch7（怎么证明你是谁）→ Ch8（进来之后能碰什么）→
+        Ch10（出去的东西怎么被管）→ Ch9（站点之间怎么连）。
+        这四章串起来正好是一条完整的数据路径，也是面试官最常追问的主线。</p>
       </div>
     </div>
 
@@ -137,7 +137,7 @@
           <span class="d">框架 vs 标准、网络保险的真相、安全是团队运动、9 大关键主题</span>
         </span>
         <span class="tail">
-          <span class="stars">★★★★★</span>
+          <span class="stars">★★★★<span class="off">★</span></span>
           <span class="badge-ready">已上线</span>
         </span>
       </a>
@@ -167,7 +167,7 @@
           <span class="d">配置清单总表、默认值 vs 推荐值、四个翻车现场、技术细节颗粒度边界</span>
         </span>
         <span class="tail">
-          <span class="stars">★★★★★</span>
+          <span class="stars">★★★★<span class="off">★</span></span>
           <span class="badge-ready">已上线</span>
         </span>
       </a>
@@ -181,40 +181,52 @@
         <span class="tail"><span class="stars">★★★<span class="off">★★</span></span><span class="badge-soon">待更新</span></span>
       </a>
 
-      <a class="ch-item soon">
+      <a class="ch-item ready" href="notes/deep-ch07-identity.html">
         <span class="idx">07</span>
         <span class="body">
-          <span class="t">用户认证</span>
-          <span class="d">RADIUS、Cisco ISE、Duo、MAB、零信任入门</span>
+          <span class="t">身份与认证：用户凭什么能进网络</span>
+          <span class="d">四条认证路径的能力边界、802.1X 全链路、PEAP vs EAP-TLS、ISE 默认拒绝、failmode 取舍</span>
         </span>
-        <span class="tail"><span class="stars">★★★★<span class="off">★</span></span><span class="badge-soon">待更新</span></span>
+        <span class="tail">
+          <span class="stars">★★★★★</span>
+          <span class="badge-ready">深度精读</span>
+        </span>
       </a>
 
-      <a class="ch-item soon">
+      <a class="ch-item ready" href="notes/deep-ch08-lan.html">
         <span class="idx">08</span>
         <span class="body">
-          <span class="t">有线与无线 LAN 安全</span>
-          <span class="d">802.1X、端口安全、二层防火墙、无线隔离</span>
+          <span class="t">LAN 分段与准入：三层粒度</span>
+          <span class="d">VLAN / Group Policy / SGT 的取舍、stateless ACL 后果、DAI 与 rogue DHCP、WPA3 192-bit 套件</span>
         </span>
-        <span class="tail"><span class="stars">★★★★<span class="off">★</span></span><span class="badge-soon">待更新</span></span>
+        <span class="tail">
+          <span class="stars">★★★★★</span>
+          <span class="badge-ready">深度精读</span>
+        </span>
       </a>
 
-      <a class="ch-item soon">
+      <a class="ch-item ready" href="notes/deep-ch09-wan.html">
         <span class="idx">09</span>
         <span class="body">
-          <span class="t">MX 与 WAN 安全</span>
-          <span class="d">Auto VPN、站点到站点、vMX、AWS 云组网</span>
+          <span class="t">WAN 与 Auto VPN：零配置背后的控制面</span>
+          <span class="d">控制面/数据面分离、拓扑取舍、non-Meraki peer 三个硬限制、Client VPN vs AnyConnect、vMX 边界</span>
         </span>
-        <span class="tail"><span class="stars">★★★★<span class="off">★</span></span><span class="badge-soon">待更新</span></span>
+        <span class="tail">
+          <span class="stars">★★★★<span class="off">★</span></span>
+          <span class="badge-ready">深度精读</span>
+        </span>
       </a>
 
-      <a class="ch-item soon">
+      <a class="ch-item ready" href="notes/deep-ch10-traffic.html">
         <span class="idx">10</span>
         <span class="body">
-          <span class="t">用户流量安全</span>
-          <span class="d">URL 过滤、IDS/IPS、AMP、Secure Connect、CASB、DLP</span>
+          <span class="t">流量安全与 SASE：两条检查链</span>
+          <span class="d">执行顺序为什么不能乱、IDS/IPS 覆盖边界、AMP 三态判定、HTTPS 解密边界、CASB 与 DLP</span>
         </span>
-        <span class="tail"><span class="stars">★★★★★</span><span class="badge-soon">待更新</span></span>
+        <span class="tail">
+          <span class="stars">★★★★★</span>
+          <span class="badge-ready">深度精读</span>
+        </span>
       </a>
 
       <a class="ch-item soon">
@@ -234,13 +246,27 @@
         </span>
         <span class="tail"><span class="stars">★★<span class="off">★★★</span></span><span class="badge-soon">待更新</span></span>
       </a>
+
+      <a class="ch-item ready" href="notes/tech-details.html">
+        <span class="idx">★</span>
+        <span class="body">
+          <span class="t">技术细节总库：参数、默认值、合规条款</span>
+          <span class="d">全书配置级参数汇总、PCI DSS / NIST 800-53 条款编号、默认值与限制速查</span>
+        </span>
+        <span class="tail">
+          <span class="stars">★★★★<span class="off">★</span></span>
+          <span class="badge-ready">速查</span>
+        </span>
+      </a>
     </div>
 
     <div class="callout info" style="max-width:810px">
       <span class="ico">i</span>
       <div>
-        <p>笔记按<strong>「核心概念 → 易考点 → 实操要点 → 记忆口诀」</strong>四段式组织，
-        可直接当作复习材料。星星代表投入产出比，不是章节篇幅。</p>
+        <p>深度精读按<strong>「设计理念 → 机制拆解 → 书中实验 → 限制与坑 → 面试问答」</strong>五段式组织，
+        目标是<strong>能解释清楚机制</strong>而不是记住结论。
+        标注「推论」的段落是我基于书中机制做的推演，便于把链路补完整；
+        书中确实没写的内容会直接标「书中未涉及」，不做编造。</p>
       </div>
     </div>
 
