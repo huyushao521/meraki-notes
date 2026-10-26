@@ -1,0 +1,946 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ch11 终端安全与 Systems Manager：检查 → 下发 → 闭环 | Meraki 安全精读</title>
+<meta name="description" content="第 11 章深度精读：Systems Manager 的四层模型（Enrollment / Policies / Profiles / Apps+Commands）、APNS 命令通道、EAP-TLS 两张证书的分工、supervised 能力差，以及 18 个可复现的配置与排障案例。">
+<link rel="stylesheet" href="../assets/style.css">
+</head>
+<body>
+<div id="progress"></div>
+
+<header class="topbar">
+  <button class="menu-btn" aria-label="打开目录">☰</button>
+  <a class="brand" href="../index.html">
+    <span class="dot"></span>
+    Meraki 安全精读
+    <small>Securing Enterprise Networks</small>
+  </a>
+  <span class="topbar-spacer"></span>
+  <a class="topbar-link hide-sm" href="deep-ch10-traffic.html">上一章 Ch10</a>
+  <a class="topbar-link" href="../index.html#chapters">章节</a>
+</header>
+
+<div class="layout">
+
+  <nav class="sidebar">
+    <div class="side-group-title">深度精读</div>
+    <a href="../index.html"><span class="num">00</span>总览与路线</a>
+    <a href="deep-ch07-identity.html"><span class="num">07</span>身份与认证</a>
+    <a href="deep-ch08-lan.html"><span class="num">08</span>LAN 分段与准入</a>
+    <a href="deep-ch09-wan.html"><span class="num">09</span>WAN 与 Auto VPN</a>
+    <a href="deep-ch10-traffic.html"><span class="num">10</span>流量安全与 SASE</a>
+    <a class="active" href="deep-ch11-endpoint.html"><span class="num">11</span>终端与 Systems Manager</a>
+    <div class="side-group-title">细节与背景</div>
+    <a href="tech-details.html"><span class="num">★</span>参数总库</a>
+    <a href="ch02-frameworks.html"><span class="num">02</span>安全框架</a>
+    <a href="ch05-admin-access-details.html"><span class="num">05</span>管理员访问</a>
+    <a href="tech-ch06-ch07.html"><span class="num">6-7</span>细节清单</a>
+    <a href="tech-ch08-ch09.html"><span class="num">8-9</span>细节清单</a>
+    <a href="tech-ch10-ch12.html"><span class="num">10-12</span>细节清单</a>
+  </nav>
+
+  <main>
+  <article class="content">
+
+    <div class="chapter-head">
+      <div class="eyebrow">第 11 章 · 深度精读</div>
+      <h1>终端安全：检查 → 下发 → 闭环</h1>
+      <p class="subtitle">
+        前四章的控制点都在网络上：谁能进网、网内怎么分段、出网怎么检查。
+        这一章把控制点挪到了<strong>设备自己身上</strong>——因为混合办公之后，员工大部分时间根本不在你的网里。
+        Systems Manager 的价值不是"能配多少策略"，而是它把<strong>审计（发现不合规）</strong>与
+        <strong>修复（下发证书 / 配置 / 软件）</strong>放在了同一个控制台里，还能跟 Sentry 准入打通。
+      </p>
+      <div class="meta-row">
+        <span class="chip strong">技术密度：高</span>
+        <span class="chip">篇幅：41 页（p.710-750）</span>
+        <span class="chip">面试高频：策略 vs 配置 / EAP-TLS 发证 / supervised 边界</span>
+      </div>
+    </div>
+
+    <div class="callout info">
+      <span class="ico">i</span>
+      <div>
+        <p><strong>标注约定：</strong><code>（p.xx）</code> 为书中原文位置；<code>（推论）</code> 为机制推演。
+        本章实操步骤极多，我把它们整理成 <strong>18 个案例</strong>，每个按「场景 → 动作 → 现象 → 坑 → 面试怎么用」写，
+        关键字段保留界面上的英文原名，方便照着点。</p>
+      </div>
+    </div>
+
+    <h2>一、设计理念：为什么终端要单独成章</h2>
+
+    <h3>1.1 控制点的三次漂移</h3>
+    <p>把这一章放回全书的位置看，会看到一条很清晰的线：</p>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>章节</th><th>控制点在哪</th><th>它回答的问题</th><th>失效场景</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Ch7 身份</td>
+            <td>人</td>
+            <td>你是谁，凭什么证明</td>
+            <td>设备本身带毒，人却是合法的</td>
+          </tr>
+          <tr>
+            <td>Ch8 LAN</td>
+            <td>交换机 / AP 端口</td>
+            <td>这台设备能不能进这个网段</td>
+            <td>设备在家、在咖啡厅，根本不碰你的端口</td>
+          </tr>
+          <tr>
+            <td>Ch9 WAN</td>
+            <td>隧道与出口</td>
+            <td>站点之间怎么连、远端怎么接</td>
+            <td>SaaS 流量直接出公网，不经过你的出口</td>
+          </tr>
+          <tr>
+            <td>Ch10 流量</td>
+            <td>路径上的检查链</td>
+            <td>穿过的流量能不能放行</td>
+            <td>端点自己已经被攻陷，流量看起来完全合法</td>
+          </tr>
+          <tr>
+            <td><strong>Ch11 终端</strong></td>
+            <td><strong>设备本身</strong></td>
+            <td><strong>这台设备的姿态是否可信</strong></td>
+            <td>—（这是最后一层，也是唯一跟人一起移动的一层）</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <p>所以本章开头那句「混合办公时代端点安全可能从未如此重要」不是套话：
+    前四章的所有控制都有一个共同前提——<strong>流量要经过你</strong>。而终端安全是唯一不依赖这个前提的一层。</p>
+
+    <h3>1.2 SM 与 Duo 的分工：管与报 vs 拦与警</h3>
+    <p>书里用一整段讲这件事（p.710-711），因为这是最容易讲错的面试点：</p>
+    <div class="vs">
+      <div class="vs-main">
+        <div class="vs-title">Meraki Systems Manager</div>
+        <p>云托管 MDM。管 Android / ChromeOS / iOS / tvOS / macOS / Windows。
+        能做的是<strong>报告</strong>（最低 OS 版本、有无强装/禁装应用、是否越狱、有无 passcode、是否按周期 check-in）
+        与<strong>推送</strong>（配置 payload、证书、应用、OS 更新）。
+        本质是<strong>异步的管理面</strong>：它改变设备的未来状态，不是拦住当下的连接。</p>
+      </div>
+      <div class="vs-main">
+        <div class="vs-title">Cisco Duo</div>
+        <p>同步的准入面。连接发生时判断设备是否可信，可以<strong>提示用户升级</strong>，
+        最终<strong>直接阻断网络访问</strong>直到设备达标。
+        它不负责把设备修好，只负责"不达标就不让进"。</p>
+      </div>
+    </div>
+    <p>两者覆盖的是同一批属性（补丁版本、屏幕锁、磁盘加密、passcode），
+    所以书里把它定义为 defense-in-depth：<strong>同一份策略，一个负责报告和管理，一个负责强制执行</strong>（p.711）。</p>
+
+    <div class="callout tip">
+      <span class="ico">◆</span>
+      <div>
+        <p><strong>一句话记住分工：</strong>SM 管与报，Duo 拦与警。
+        面试如果被问「有了 Duo 还需要 MDM 吗」，正确的回答是：Duo 只能让设备<em>进不来</em>，
+        但进不来的员工还是没法工作；MDM 才能把设备<em>修到达标</em>。反过来只有 MDM 也不行，
+        因为报告依赖用户自觉，强制力必须由准入侧提供。</p>
+      </div>
+    </div>
+
+    <h3>1.3 最被低估的设计：Sentry 与 SM 打通</h3>
+    <p>书里说选择 SM 而不是竞品的<strong>关键理由</strong>是它带来的 Sentry 系策略（p.710），落点很具体：
+    Ch8 的 Sentry Wi-Fi / LAN、Ch9 的 Sentry VPN 只要几次点击就能上线，
+    而其中「用证书做 EAP-TLS 入网」这件事，传统做法需要一套 PKI + 人工分发证书 + 用户手动装描述文件，
+    现在变成 <strong>Meraki 自有 CA 自动签发 + SM 自动推送 + 用户零交互连上</strong>（p.722、p.724-730）。</p>
+    <div class="callout warn">
+      <span class="ico">!</span>
+      <div>
+        <p><strong>反过来看这条设计的真正目的：不是省事，是消灭影子 IT。</strong>
+        书里明确写过：如果入网流程太麻烦，用户就会去找开放 SSID、自己插一个家用路由器（p.722）。
+        所以"零交互入网"是一项<strong>安全控制</strong>：流程越顺，用户绕过它的动机越小。
+        面试里把这一点讲出来，比背配置项得分高得多。</p>
+      </div>
+    </div>
+
+    <h2>二、机制拆解</h2>
+
+    <h3>2.1 控制平面：APNS 静默通知 + 拉取，而不是长连接</h3>
+    <p>这是理解 SM 一切"延迟"现象的根：</p>
+    <div class="card">
+      <p><strong>书上写的链路（p.711）：</strong>Apple 的 Push Notification Service 先给设备发一条<strong>静默通知</strong>
+      → 设备被唤醒后向 Meraki Dashboard <strong>check-in</strong> → 取回待执行的命令。</p>
+      <p style="margin-bottom:0"><strong>推论出来的三个性质：</strong>
+      ① SM 不能主动连设备，只能"敲门"，所以命令是<strong>最终一致</strong>而非实时；
+      ② 设备离线时命令排队，上线后补执行——所以你会看到"昨天点的 Push 今天才生效"；
+      ③ 整条链路依赖 Dashboard 里那张 Apple push 证书，<strong>证书过期 = 所有 Apple 设备失联</strong>，
+      这是运维里最经典的定时炸弹。</p>
+    </div>
+    <p>证书本身的信任模型是：Meraki 生成 CSR → 你拿 Apple ID 去 <code>identity.apple.com/pushcert</code> 换取签名后的
+    <code>.pem</code> → 传回 Dashboard（p.712-714）。注意 <strong>Apple ID 必须开两步验证</strong>（p.712），
+    而且下载回来的文件名里带 <code>MDM–Meraki Inc.–Certificate.pem</code>，
+    面试里被问"为什么 MDM 需要一张证书"，标准答案是：<strong>它是 Apple 允许某个 MDM 服务器向这台设备下命令的授权凭证</strong>。</p>
+
+    <h3>2.2 四层模型：只读的审计层 + 可写的执行层</h3>
+    <p>本章所有配置项都能塞进下面四层。这张表建议直接背下来，因为它解释了"为什么配了策略设备还是不合规"。</p>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>层</th><th>Dashboard 位置</th><th>读写属性</th><th>能做什么</th><th>不能做什么</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>Enrollment</strong> 准入</td>
+            <td>Systems Manager &gt; Devices &gt; Add Devices</td>
+            <td>写（一次性）</td>
+            <td>把设备纳入管理；决定能力上限（ADE / device owner / managed profile）</td>
+            <td>手动入 ADE 需恢复出厂，不适用 BYOD（p.715）</td>
+          </tr>
+          <tr>
+            <td><strong>Policies</strong> 合规审计</td>
+            <td>Systems Manager &gt; Policies</td>
+            <td><strong>只读</strong></td>
+            <td>检查 OS 版本、必装/禁装应用、越狱、passcode、check-in 周期；出合规报告与告警</td>
+            <td><strong>不下发任何设置或软件</strong>（p.716）</td>
+          </tr>
+          <tr>
+            <td><strong>Profiles + Payloads</strong> 配置下发</td>
+            <td>Systems Manager &gt; Settings &gt; + Add Profile</td>
+            <td>写</td>
+            <td>推证书、Wi-Fi、VPN、passcode、restrictions、FileVault 等设置</td>
+            <td>只对 Scope 命中的设备生效</td>
+          </tr>
+          <tr>
+            <td><strong>Apps + Commands</strong> 软件与命令</td>
+            <td>Systems Manager &gt; Apps / Devices</td>
+            <td>写</td>
+            <td>推送应用（可静默）、推 OS 更新、下发远程命令</td>
+            <td>OS 更新需 ADE + supervised（p.748）</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="callout tip">
+      <span class="ico">◆</span>
+      <div>
+        <p><strong>这条"只读/可写"的分界是本章的主线。</strong>书里还给了操作顺序建议：<strong>先配 policy，再配 profile</strong>（p.716）。
+        原因是 policy 定义了"达标长什么样"，profile 才是把它做出来的手段；
+        先有度量标准再改配置，才能用同一张合规报表证明改动有效——这就是案例 13 那个"不合规 → 自动回归合规"的闭环。</p>
+      </div>
+    </div>
+
+    <h3>2.3 Scope 的七个维度：策略作用域本身就是一种控制</h3>
+    <p>创建 profile 时最容易被当成"随便选一下"的一步，其实决定了整套策略的表达能力（p.721-722）：</p>
+    <div class="keypoints">
+      <ul>
+        <li>全部设备 / 带某个 tag 的设备 / 不带某个 tag 的设备（书里例子用 <code>Store-device</code>）</li>
+        <li>用户所在位置</li>
+        <li>设备是否已经符合安全策略（合规才下发某些宽松配置）</li>
+        <li>时间段</li>
+        <li>设备所有者是谁</li>
+      </ul>
+    </div>
+    <p>书里还给了两条容易被忽略的工程建议：<strong>每个操作系统单独一个 profile</strong>（同一条 passcode 策略在 iOS 和 macOS 上的解释完全不同），
+    以及用 <code>Description</code> 字段记录<strong>创建者/修改者的姓名缩写 + 变更摘要</strong>做版本控制（p.721）。</p>
+
+    <h3>2.4 EAP-TLS 的两张证书：一张证明我是谁，一张决定我信谁</h3>
+    <p>这是本章技术含量最高、也最容易在面试里被追问到底的细节。书里的 Wi-Fi payload 里有两个必填项（p.724-730），
+    二者缺一不可，而且作用完全相反：</p>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>字段</th><th>放什么</th><th>解决什么问题</th><th>放错的后果</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>Identity Certificate</code></td>
+            <td>ISE Certificate Provisioning Portal 签发的<strong>设备证书</strong></td>
+            <td>向 AP / ISE 证明<strong>这台设备是谁</strong>（客户端侧身份）</td>
+            <td>没有它就只能退回 PEAP 用户名密码，失去 EAP-TLS 的意义</td>
+          </tr>
+          <tr>
+            <td><code>Trusted Certificates</code></td>
+            <td><strong>ISE CA 证书</strong>（书里 CN 为 <code>ise.selab.local</code>）</td>
+            <td>让设备判断<strong>对面那个 RADIUS 是不是真的</strong>（服务端侧验证）</td>
+            <td>下拉框里什么都没有可选——因为信任锚没被推下去（p.726）</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <p>对比 Ch7 讲的 PEAP：PEAP 只验服务端、客户端交密码，是<strong>单向信任</strong>；
+    EAP-TLS 两边都出示证书，是<strong>双向信任</strong>，也是它能做到"零用户交互"的根本原因——
+    没有密码要输，就没有交互可做。书里在设备上点开 profile 时，能看到
+    <code>WI-FI NETWORK</code> 下同时列出 SSID 与所需证书（p.727），最后在 ISE live logs 里确认协议确实是 <code>EAP-TLS</code>（p.729）。</p>
+
+    <h3>2.5 supervised 与否，是能力的分水岭</h3>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>能力</th><th>supervised（ADE 注册）</th><th>非 supervised</th><th>依据</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>按名字隐藏指定 App</td>
+            <td>可以（<code>Show or Hide Apps</code>）</td>
+            <td><strong>不可以</strong>，只能按 age rating 限制</td>
+            <td>p.739、p.741</td>
+          </tr>
+          <tr>
+            <td>推送 OS 更新</td>
+            <td>可以</td>
+            <td>不可以</td>
+            <td>p.748</td>
+          </tr>
+          <tr>
+            <td>设备到达即已注册</td>
+            <td>可以（ADE 自动）</td>
+            <td>需用户手动 enroll</td>
+            <td>p.714-715</td>
+          </tr>
+          <tr>
+            <td>BYOD 可用性</td>
+            <td>不可（需恢复出厂）</td>
+            <td>可以；Android 还可走 <code>managed profile mode</code> 容器化工作数据</td>
+            <td>p.715</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="callout warn">
+      <span class="ico">!</span>
+      <div>
+        <p><strong>代价说清楚：</strong>supervised 的能力来自"公司拥有这台设备"这个前提，
+        而开启 supervised 的手动路径<strong>必须恢复出厂</strong>。所以这是一个<strong>所有权与能力的交换</strong>，
+        不是纯技术选择——所以在方案里必须按设备归属分池：公司资产走 ADE + supervised，
+        个人设备走 BYOD + <code>managed profile mode</code>，两套 profile，两套策略。</p>
+      </div>
+    </div>
+
+    <h2>三、案例库（18 个，可复现）</h2>
+    <p>下面每个案例都按「场景 → 动作 → 现象 → 坑 → 面试怎么用」组织。
+    前 9 个是"把系统搭起来"的骨架，后 9 个是"真正产生安全效果"的落地案例。</p>
+
+    <h3>案例 1 · 打通 Apple 通道：装 push 证书（一切的前提）</h3>
+    <div class="card">
+      <p><strong>场景：</strong>刚拿到 SM 许可，一台 Apple 设备都还没有，什么都不可能做。</p>
+      <p><strong>动作：</strong><code>Organization &gt; MDM</code>（Configure 下）→
+      <code>Apple MDM Push Certificate &gt; + Add Certificate</code> →
+      下载 <code>Meraki–Apple–CSR.csr</code> → 点 <code>Apple Push Certificate Portal</code> 登录
+      <code>identity.apple.com/pushcert</code>（<strong>需两步验证</strong>）→
+      <code>Create a Certificate</code> → 勾同意条款 → <code>Choose File</code> 选 CSR → <code>Upload</code> →
+      下载 <code>MDM–Meraki Inc.–Certificate.pem</code> → 回 Dashboard 填 Apple ID、拖入 pem、<code>Add</code>（p.711-714）。</p>
+      <p><strong>现象：</strong>MDM Settings 页出现 <code>CURRENT APPLE MDM PUSH CERTIFICATE</code> 区块及证书详情（p.714，图 11-6）。</p>
+      <p><strong>坑（书上明写的）：</strong>上传 CSR 报错时，<strong>切回旧版 MDM Settings 页面重新下载 CSR</strong> 即可（p.713）。
+      这类"新版界面有 bug，回退旧版"的提示在书中极少出现，属于可以当经验讲的细节。</p>
+      <p style="margin-bottom:0"><strong>面试怎么用：</strong>被问 MDM 的通信原理时，从这张证书讲起——
+      不是"云平台直接连设备"，而是"平台拿 Apple 授权的凭证，通过 APNS 敲门，设备回头来取命令"。</p>
+    </div>
+
+    <h3>案例 2 · 手动 enroll 一台 iPad（并说明为什么生产环境不这么干）</h3>
+    <div class="card">
+      <p><strong>场景：</strong>书里所有 Apple 侧的演示，都是用<strong>手动注册</strong>的一台 iPad 完成的（p.715）。</p>
+      <p><strong>动作：</strong><code>Systems Manager &gt; Devices &gt; Add Devices</code> 按提示生成注册入口；
+      用户侧完成认证。默认认证方式是 <strong>Meraki Cloud 认证</strong>，
+      生产环境应改为 SAML / Entra / ISE / Duo（<code>Systems Manager &gt; General &gt; End User Authentication Settings</code>，p.715）。</p>
+      <p><strong>现象：</strong>设备出现在 Devices 列表，开始上报数据、可接收 profile 与远程命令（p.714-715）。</p>
+      <p><strong>坑：</strong>注册这一步决定了后面所有能力上限。手动注册的设备是<strong>非 supervised</strong>，
+      于是案例 12 的"按名字隐藏 App"和案例 15 的"推 OS 更新"都用不了——
+      <strong>很多人以为这是配置没找对，其实是注册方式选错了。</strong></p>
+      <p style="margin-bottom:0"><strong>面试怎么用：</strong>"MDM 的能力边界在注册那一刻就定了"，
+      这句话能立刻把"会用界面"和"懂设计"区分开。生产建议：公司资产走 ADE（到货即注册），BYOD 走 Android
+      <code>managed profile mode</code> 或 iOS 手动注册 + 只下发容器级策略。</p>
+    </div>
+
+    <h3>案例 3 · 用一条策略把五项检查串起来（<code>Corp_Security_Policy</code>）</h3>
+    <div class="card">
+      <p><strong>场景：</strong>企业要能回答"哪些设备不符合安全基线、为什么"。</p>
+      <p><strong>动作：</strong><code>Systems Manager &gt; Policies &gt; + Add New</code>；名称填
+      <code>Corp_Security_Policy</code>（<strong>该字段不允许空格</strong>），勾选：
+      ① 已配置 passcode lock；② 未 jailbreak / 未 root；
+      ③ <code>All Devices &gt; Application Block List</code> 加入 <code>TikTok</code>；
+      ④ <code>All Devices &gt; Mandatory Applications</code> 加入 <code>Cisco Secure Client</code>；
+      ⑤ <code>All Devices &gt; Minimum OS Version</code> 设 iOS ≥ <strong>17.1</strong>（可对不同 OS 分别设）；
+      ⑥ check-in 周期 ≤ <strong>30 天</strong> → <code>Save Changes</code>（p.717-718）。</p>
+      <p><strong>现象：</strong>Devices 列表开始出现合规 / 不合规状态。</p>
+      <p><strong>坑：</strong>应用白/黑名单是靠<strong>应用名自动解析成 bundle ID</strong> 的，而 bundle ID 未必直观（p.717）；
+      名字拼写漂移会导致策略形同虚设。另外 30 天这个 check-in 闸门的作用是<strong>发现失联设备</strong>——丢了、被偷了、
+      或者用户自己把 SM 描述文件删了（p.718），这条检查就是唯一能看见这些情况的传感器。</p>
+      <p style="margin-bottom:0"><strong>面试怎么用：</strong>六项检查正好对上一组标准条款：
+      passcode ↔ NIST AC-11，失败擦除 ↔ AC-7(2)，加密 ↔ AC-19，必装 EDR ↔ CSF DE.CM-03，
+      不可被用户更改 ↔ PCI DSS 4.0 1.5.1，禁装 EOL 软件 ↔ Essential Eight。
+      把"技术动作 ↔ 合规条款"对上，是从运维视角切到治理视角的最短路径。</p>
+    </div>
+
+    <h3>案例 4 · 在 Devices 列表里把"为什么不合规"变成一列</h3>
+    <div class="card">
+      <p><strong>场景：</strong>报表说某台设备不合规，但不说原因，用户来问就答不上。</p>
+      <p><strong>动作：</strong><code>Systems Manager &gt; Devices</code>，点 General 右侧的<strong>加号</strong>自定义列，
+      勾上合规状态与 <code>Policy Reasons</code>（p.718）。</p>
+      <p><strong>现象：</strong>图 11-8 中两台设备并排显示状态与原因，其中一台因<strong>缺 Cisco Secure Client</strong> 而不合规（p.718）。</p>
+      <p><strong>坑（书上明说）：</strong>该页有 beta 版本，<strong>写作时 beta 版没有 Policy Reasons 列</strong>（p.718）。</p>
+      <p style="margin-bottom:0"><strong>面试怎么用：</strong>合规运营的成本大头不是"定策略"而是"处理例外"。
+      一个能直接给出原因字段的界面，决定了工单量级别——这是把安全工程讲成业务影响的好素材。</p>
+    </div>
+
+    <h3>案例 5 · 每日合规报告邮件（以及一个几乎人人踩的收件人坑）</h3>
+    <div class="card">
+      <p><strong>场景：</strong>没人天天盯 Dashboard，需要主动推送。</p>
+      <p><strong>动作：</strong><code>Systems Manager &gt; Alerts</code>→ <code>Enabled Security Reports</code>
+      配每日邮件，把违反 <code>Corp_Security_Policy</code> 的设备报给管理员 → 页面底部 <code>Save</code>（p.718-719）。</p>
+      <p><strong>现象：</strong>图 11-10 是一份真实报告样例——报告上还是<strong>Meraki 原始 logo</strong>（作者自己说的彩蛋，p.719）。</p>
+      <p><strong>坑（书中明确写出，实测最常踩）：</strong>如果你按建议给 SM 建了<strong>独立网络</strong>，
+      那么 <code>Default Recipients = All Network Admins</code> <strong>不包含 organization admin</strong>，
+      所以你以为配好了、其实一封都收不到。三种修法（p.718-719）：
+      ① 给 SM 网络配 network admins（<code>Systems Manager &gt; General</code>）；
+      ② 在 <code>Additional Recipients</code> 填收件人；
+      ③ 直接在页面顶部 <code>Default Recipients</code> 里加用户。</p>
+      <p style="margin-bottom:0"><strong>顺便区分两个词（面试常考）：</strong>
+      <strong>alert</strong> = 检测到合规问题时立即发；<strong>report</strong> = 按日 / 周 / 月发的汇总摘要（p.719）。</p>
+    </div>
+
+    <h3>案例 6 · 建第一个 Profile，用 tag 圈定作用域</h3>
+    <div class="card">
+      <p><strong>场景：</strong>Acme 有大量门店设备，配置只该发给门店机，不能发给办公室电脑。</p>
+      <p><strong>动作：</strong><code>Systems Manager &gt; Settings</code>（Manage 下）→ <code>+ Add Profile</code> →
+      保持 <code>Device Profile (Default)</code> → <code>Continue</code> → 填 <code>Name</code> →
+      <code>Scope</code> 选"带 tag <code>Store-device</code> 的设备" → <code>Save</code>（p.720-722）。</p>
+      <p><strong>现象：</strong>profile 建立完成，后续所有 payload 都挂在它下面。</p>
+      <p><strong>坑 / 工程建议：</strong>① 一个 profile 可以只放一个 payload，也可以放一堆——<strong>命名时就要决定这个粒度</strong>；
+      ② <strong>每个 OS 单独一个 profile</strong>，因为同一条 passcode 策略在 iOS 与 macOS 上语义不同；
+      ③ 用 <code>Description</code> 记"谁改的 + 改了什么"当版本控制（p.721）。
+      这三条都是"半年后维护"成本，不是配置技巧。</p>
+      <p style="margin-bottom:0"><strong>面试怎么用：</strong>被问"你怎么组织 MDM 配置"，
+      答"按 OS 分 profile、按 tag 分作用域、用 Description 做变更追溯"，
+      比答"我在 Settings 里点了 Add Profile"高一个层次。</p>
+    </div>
+
+    <h3>案例 7 · 一次推两张证书（EAP-TLS 的前置作业）</h3>
+    <div class="card">
+      <p><strong>场景：</strong>要让设备用证书入网，先得把证书送到设备上。</p>
+      <p><strong>前提：</strong>设备证书来自 <strong>Cisco ISE 的 Certificate Provisioning Portal</strong>；
+      第二张是 <strong>ISE CA 证书</strong>（Wi-Fi payload 要知道"该信任谁"）。
+      可推送的格式有 <code>.cer</code> <code>.p12</code> <code>.crt</code> <code>.pem</code> 四种（p.722）。</p>
+      <p><strong>动作：</strong>Settings → 打开已有 profile → <code>+ Add Settings</code> → <code>Certificate</code> →
+      填 <code>Name</code> → 有密码则填 <code>Password</code> → <code>Certificate &gt; Choose File</code> 逐个导入 → <code>Save</code>。
+      同一流程做两遍（p.722-724）。</p>
+      <p><strong>现象：</strong><strong>点 Save 之后</strong>证书详情（Subject/CN、有效期）才填出来——
+      界面在保存前不显示元数据（p.724）。</p>
+      <p><strong>坑：</strong>这一步没做，下一步 Wi-Fi payload 的 <code>Trusted Certificates</code> 下拉框会是<strong>空的</strong>，
+      你会以为界面有 bug，其实是信任锚还没下发（p.726）。</p>
+      <p style="margin-bottom:0"><strong>面试怎么用：</strong>这是"配置项之间的隐式依赖"最好的例子——
+      两个页面看起来无关，实际前者是后者的数据源。排障时先查依赖，别先怀疑产品。</p>
+    </div>
+
+    <h3>案例 8 · EAP-TLS 零交互入网（全章最完整的实验，四层验证）</h3>
+    <div class="card">
+      <p><strong>场景：</strong>公司要求员工连 Wi-Fi 不输密码、不点确认，且身份基于设备证书。</p>
+      <p><strong>动作：</strong>Settings → profile → <code>+ Add Settings</code> → <code>Wi-Fi Settings</code>；
+      <code>Configuration = Manual</code>（默认）；填 <code>SSID</code>；勾 <code>Auto Join</code>；
+      勾 <code>Disable MAC Address Randomization (iOS 14 or Later)</code>；
+      <code>Security = WPA2 Enterprise</code>（<strong>必须选含 Enterprise 的项</strong>，否则下面的 Enterprise Settings 不展开）；
+      <code>Protocols = TLS</code>；
+      <code>Authentication &gt; Identity Certificate</code> 选案例 7 的设备证书；
+      <code>Trust &gt; Trusted Certificates</code> 勾 CN 为 <code>ise.selab.local</code> 的 ISE CA → <code>Save</code>（p.724-730）。</p>
+      <p><strong>现象（分四层取证，这才是完整实验）：</strong>
+      ① 配置层：图 11-18/11-19 显示两张证书的勾选结果（p.726）；
+      ② 设备声明层：iPad 上 <code>Settings &gt; General &gt; VPN &amp; Device Management &gt; Meraki Systems Manager</code>，
+      在 <code>WI-FI NETWORK</code> 下能看到该 SSID 与所需证书（p.727）；
+      ③ 体验层：<strong>全程零用户交互</strong>，直接连上（p.728）；
+      ④ 后端证据层：Cisco ISE live logs 显示认证协议确实是 <strong>EAP-TLS</strong>（p.729）。</p>
+      <p><strong>坑：</strong>连不上时先查 Meraki Dashboard 日志，再查 <strong>ISE 日志</strong>——
+      这条链跨了三个系统（设备 / MDM / RADIUS），<strong>定位错系统是最大的时间浪费</strong>（p.728）。
+      另外"关闭 MAC 随机化"这个勾选很关键：否则每次连接 MAC 变化会让基于 MAC 的任何策略与日志失去意义。</p>
+      <p style="margin-bottom:0"><strong>面试怎么用：</strong>这四层验证是最有说服力的回答模板。
+      尤其第 ④ 层——"不是连上了就算成功，要去 ISE 日志确认协议真的是 EAP-TLS"，
+      说明你知道<strong>PEAP 也表现为能连上</strong>，只有日志能区分两者。</p>
+    </div>
+
+    <h3>案例 9 · 用 VPN payload 下发公司 VPN（L2TP），并省掉重复输密码</h3>
+    <div class="card">
+      <p><strong>场景：</strong>非 Meraki 的 VPN 服务器（或 Sentry 不适用的场景），用户不想手抄服务器地址与密钥。</p>
+      <p><strong>动作：</strong>Settings → profile → <code>+ Add Settings</code> → <code>VPN Settings</code>；
+      <code>Connection Name = Corp VPN</code>；从另一个标签页的 IPsec Settings 页<strong>复制 Hostname</strong> 粘进
+      <code>Server</code>；<strong>复制 Shared Secret</strong> 粘进 <code>Shared Secret</code>；
+      <code>Connection Type = L2TP</code>；可选勾 <code>Send All Traffic</code>（关掉 split tunneling）→ <code>Save</code>（p.730-734）。</p>
+      <p><strong>现象：</strong>① iPad 的 MDM 详情页出现 <code>VPN SETTINGS</code> 下的 payload 名（p.731）；
+      ② 用户被提示输入用户名密码后连上（p.732）；
+      ③ <strong>体验优化</strong>：<code>Settings &gt; General &gt; VPN &amp; Device Management &gt; VPN</code>
+      点蓝色 <strong>i</strong> → <code>Edit</code> → 填 <code>Account</code> / <code>Password</code> → <code>Done</code>，
+      之后不再重复输入（p.733）。</p>
+      <p><strong>坑：</strong>连不上查 Dashboard 的 <strong>event log</strong>（p.732）。
+      另外记住边界：<strong>VPN payload 是给"非 Meraki VPN"用的</strong>；Meraki 自己的 Sentry VPN 只要几次点击，
+      不需要这套手工 payload（p.730）。同理 Wi-Fi payload 也是给非 Meraki SSID 或 Sentry 不兼容场景用的。</p>
+      <p style="margin-bottom:0"><strong>面试怎么用：</strong>"什么时候用 Sentry，什么时候用 payload"是很好的辨析题：
+      <strong>Sentry = 一键 + Meraki CA 自动发证 + 零交互；payload = 兼容存量非 Meraki 设备</strong>。
+      两条路并存不是重复功能，是迁移期的桥。</p>
+    </div>
+
+    <h3>案例 10 · Passcode 策略：6 位 / 5 分钟 / 10 次，以及三种验证方法</h3>
+    <div class="card">
+      <p><strong>场景：</strong>把 NIST AC-11（空闲锁屏）与 AC-7(2)（失败次数擦除）落成一条 payload。</p>
+      <p><strong>动作：</strong>Settings → profile → <code>+ Add Settings</code> → <code>Passcode</code>；
+      <code>Minimum Length = 6</code>、<code>Auto-Lock = 5 minutes</code>、
+      <code>Maximum Number of Failed Attempts = 10</code> → <code>Save</code>（p.735-738）。</p>
+      <p><strong>现象（同一件事从三个层面取证）：</strong>
+      ① iOS MDM 详情页 <code>Contains:</code> 里出现 <code>Password Policy</code>（p.737）；
+      ② 点 <code>Restrictions &gt; Passcode</code>，参数与 SM 完全一致（p.737）；
+      ③ <strong>最强证据</strong>：iOS <code>Settings &gt; Touch ID &amp; Passcode</code> 里
+      <code>Erase Data</code> 滑块变<strong>开启且灰化锁定</strong>——用户改不回去（p.738）。
+      Android 侧则是到 <code>Settings &gt; Security &gt; Screen Lock</code> 尝试改/删 PIN，应被拒（Android 10+，p.736）。</p>
+      <p><strong>坑：</strong>看到 <code>Contains: Password Policy</code> 只能证明"描述文件里有这条"，
+      <strong>不能证明设备真的执行了</strong>。真正有效的验证是去系统设置里看那个开关的状态——
+      灰化锁定 = 由 MDM 强制，这个细节在面试里非常加分。</p>
+      <p style="margin-bottom:0"><strong>面试怎么用：</strong>"如何验证一条 MDM 策略真的生效"——
+      答"三层取证：profile 声明 → 系统设置实际值 → 用户尝试修改被拒"。</p>
+    </div>
+
+    <h3>案例 11 · 磁盘加密：故意不提供开关，这是设计而不是缺失</h3>
+    <div class="card">
+      <p><strong>场景：</strong>合规要求"移动设备必须加密"，你要找那个开关。</p>
+      <p><strong>动作：</strong>找了一圈发现<strong>SM 里没有"移动端磁盘加密"开关</strong>。
+      书上给的做法是<strong>只做验证</strong>：iOS 17.2+ 上 <code>Settings &gt; Face ID &amp; Passcode</code> 滚到最底，
+      最后一行显示 <code>Data protection is enabled.</code>；Android 侧只要确认已设 PIN 即可（p.738-739）。</p>
+      <p><strong>现象：</strong>合规目标是达成了，但<strong>不是通过下发配置达成的</strong>。</p>
+      <p><strong>坑 / 机制：</strong>iOS 的 data protection 与 Android 的 FBE 都是<strong>设了 passcode 就自动开启</strong>，
+      所以真正的杠杆是案例 10 的 passcode 策略。唯一的例外是 Mac：需要 <strong>FileVault</strong> 的 settings payload
+      去强制加密，再用 policy 审计合规（p.739）。</p>
+      <p style="margin-bottom:0"><strong>面试怎么用：</strong>这条很适合讲"控制目标 ↔ 控制手段"的分离：
+      <strong>AC-19 要的是结果，SM 提供的是间接触发</strong>。
+      顺带说明为什么 macOS 要单独处理——桌面系统不会因为设了登录密码就自动全盘加密。</p>
+    </div>
+
+    <h3>案例 12 · 用 Restrictions 隐藏 TikTok，以及一个破坏性的反向实验</h3>
+    <div class="card">
+      <p><strong>场景：</strong>公司要求某些应用在设备上彻底不可见（不只是不能装）。</p>
+      <p><strong>动作：</strong>Settings → profile → <code>+ Add Settings</code> → <code>Restrictions</code> →
+      滚到 <code>Apple Supervised Restrictions</code> →
+      <code>Show or Hide Apps = Do Not Allow the Following Apps</code> → <code>Choose an App</code> 输入
+      <code>TikTok</code> 选中 → 页面底部 <code>Save</code>（p.739-742）。</p>
+      <p><strong>现象 1（正向）：</strong>profile 同步后该应用在设备上不可访问；
+      iOS 的 SM profile 下会出现 <code>Managed App</code> 限制项作为凭证（p.741）。</p>
+      <p><strong>现象 2（反例，本章最值得记住的破坏性行为）：</strong>在<strong>非 supervised</strong> 设备上做同样的操作，
+      结果<strong>所有非系统应用都被隐藏了</strong>（p.741）。
+      验证方法很朴素：直接在被影响的设备上搜那个应用名（p.741）。</p>
+      <p><strong>坑：</strong>非 supervised 设备只能按 <strong>age rating</strong> 限制，不能点名隐藏（p.740）。
+      Apple Configurator 虽然能给设备开 supervision，但<strong>不适合大规模设备群</strong>（p.740）。</p>
+      <p style="margin-bottom:0"><strong>面试怎么用：</strong>这是"测试要覆盖失败路径"的真实案例——
+      一个看起来只是"选个应用"的操作，在错误的注册方式下会一次性隐藏员工全部工作应用，
+      业务当场停摆。<strong>先在测试设备上验证 restriction 的实际效果，再推 Scope</strong>，
+      这条经验比任何一条配置项都值钱。</p>
+    </div>
+
+    <h3>案例 13 · 推 Cisco Secure Client，并观察合规状态自动回归（全章闭环）</h3>
+    <div class="card">
+      <p><strong>场景：</strong>案例 3 的策略把 Cisco Secure Client 列为<strong>必装应用</strong>，
+      所以一批设备此前一直显示"不合规"。现在要修复它们。</p>
+      <p><strong>动作：</strong><code>Systems Manager &gt; Apps</code>（Monitor 下）→ <code>+ Add App</code> →
+      <code>App Platform = iOS</code> → 来源 <code>App Store App</code> → <code>Next</code> →
+      搜索选中 <code>Cisco Secure Client</code>（可选下载国家 App Store）→
+      勾 <code>Keep App Up to Date</code>、勾 <code>Remove with MDM</code>、<strong>取消勾 <code>Removable</code></strong> →
+      <code>Purchase Method</code> 选 VPP 类以静默安装 → <code>Scope = All Devices</code> → <code>Save</code> →
+      回 Apps List 勾选该 app → <code>Push &gt; Push to All in Scope</code> → <code>Confirm</code>（p.742-748）。</p>
+      <p><strong>现象 1：</strong>若<strong>未设</strong> <code>Purchase Method</code>，用户会收到安装通知、可以取消，
+      但 <strong>SM 会自动重试</strong>；设了则<strong>静默安装</strong>，图标直接出现在桌面（p.747）。</p>
+      <p><strong>现象 2：</strong>iOS MDM 详情页点 <code>Apps</code> 可列出已推送的应用，确认安装成功（p.747）。</p>
+      <p><strong>现象 3（闭环证据）：</strong>Devices 列表里这台设备<strong>从"不合规"变回"合规"</strong>（p.748）。
+      附注：图标显示的是 <strong>AnyConnect</strong> 而不是 Cisco Secure Client，因为品牌更名还在进行中（p.747）。</p>
+      <p><strong>坑：</strong>三个开关的语义要弄清：
+      <code>Keep App Up to Date</code> = 自动更新；<code>Remove with MDM</code> = 设备退出管理时一并卸载；
+      <strong>取消 <code>Removable</code></strong> = 用户不能自行卸载（对应 PCI DSS 4.0 1.5.1「控制不可被用户更改」）。
+      这也是书里说的四项应用管理要求（p.742）：装检测类应用（CSF DE.CM-03）、防用户改动（PCI 1.5.1）、
+      能移除 EOL 软件、能禁止安装 EOL 软件（Essential Eight）。</p>
+      <p style="margin-bottom:0"><strong>面试怎么用：</strong>把这条案例当成"安全运营闭环"的完整叙事：
+      <strong>策略定义标准 → 报告发现差距 → 推送修复 → 报告复核通过</strong>。
+      很多人只会配策略，讲不出闭环，这四步正好补上。</p>
+    </div>
+
+    <h3>案例 14 · 用 Duo Trusted Endpoints 替代设备证书</h3>
+    <div class="card">
+      <p><strong>场景：</strong>不想维护一套 PKI 给每台设备发证，但仍要按设备可信度决定放行/拒绝。</p>
+      <p><strong>动作：</strong>SM 在这里干三件事（p.748）：
+      ① 推 <strong>Duo Mobile / Duo Desktop</strong> 应用；
+      ② 用 payload 下发 Duo 应用的 <strong>Trusted Endpoints configuration key</strong> 与
+      <strong>Trusted Endpoints identifier</strong>；
+      ③ 通过 <strong>API 集成</strong>把 SM 的资产清单数据提供给 Duo。</p>
+      <p><strong>现象：</strong>Duo 能判定设备是否可信，管理员据此允许或拒绝访问——这是<strong>设备证书方案的功能替代品</strong>。</p>
+      <p><strong>坑：</strong>它和案例 8 是两条不同的信任路线：
+      <strong>证书路线</strong>把信任放进设备（离线可验证、与 RADIUS 天然配合）；
+      <strong>Duo 路线</strong>把判断放到云侧（依赖实时在线与 API 数据新鲜度）。
+      选型时要问"断网时还要不要验证"。</p>
+      <p style="margin-bottom:0"><strong>面试怎么用：</strong>
+      "设备信任可以由三种东西证明：设备证书、MDM 清单、Duo 的 Trusted Endpoints"——
+      能列出三条路线并说清各自的依赖，就是架构视角。</p>
+    </div>
+
+    <h3>案例 15 · 推 OS 更新，与"最多推迟 3 次"这条硬限制</h3>
+    <div class="card">
+      <p><strong>场景：</strong>合规报表显示大量设备版本落后，想批量升级。</p>
+      <p><strong>前提：</strong>iOS 设备必须通过 <strong>ADE 注册且为 supervised</strong>（p.748）。</p>
+      <p><strong>动作：</strong><code>Systems Manager &gt; Devices</code>（Monitor 下）→ 勾选设备 →
+      <code>Command = Install Available OS Updates</code> → 右侧面板选 <code>OS Version</code>、
+      <code>Install Action</code> 保持默认 → <code>Update</code> →
+      点表格右侧齿轮加 <code>OS Update Status</code> 列 → 刷新看进度（p.749-750）。</p>
+      <p><strong>现象：</strong>用户收到"组织要求升级"提示，<strong>最多推迟 3 次</strong>，之后必须升级才能继续用设备（p.750）。</p>
+      <p><strong>坑：</strong>iOS 的更新是<strong>两步流程</strong>——先下载，再（重复执行一次命令）触发安装，
+      不是一键完成（p.749-750）。这解释了"命令发了却没升级"的常见疑惑。</p>
+      <p style="margin-bottom:0"><strong>面试怎么用：</strong>补丁管理最常见的反对意见是"影响业务"。
+      "可推迟 3 次"是<strong>把可用性让步写进产品</strong>的典型设计——既给用户缓冲，又保证收敛。
+      配合前面案例 5 的报表，就是一条完整的补丁治理链路。</p>
+    </div>
+
+    <h3>案例 16 · 混合网络迁移：旧网 + 新网并存，用户不需要二次 onboard</h3>
+    <div class="card">
+      <p><strong>场景：</strong>存量站点跑旧设备，新站点用 Meraki；而新网要上的 Sentry 特性
+      （如 WPA3、AnyConnect 场景）<strong>当前与旧设备不兼容</strong>（p.722、p.723）。</p>
+      <p><strong>动作：</strong>新网络先启用 Sentry 系访问控制；同时用 SM 给用户设备下发<strong>旧网络</strong>的
+      profile（Wi-Fi / VPN / 证书）。</p>
+      <p><strong>现象：</strong>用户继续连旧网完全不受影响；站点逐个升级后<strong>自然迁移</strong>到新网，
+      不需要重新注册或重新发证。</p>
+      <p><strong>坑：</strong>这是一条<strong>设计层面的迁移策略</strong>，不是某个开关。
+      要点是让设备同时持有两套入网凭据——SM 同时是"新世界的入口"和"旧世界的兼容层"。</p>
+      <p style="margin-bottom:0"><strong>面试怎么用：</strong>被问"如何在不中断业务的前提下换架构"，
+      这就是标准解法：<strong>控制面先双轨、数据面按站点切换</strong>。
+      现实中大部分安全改造失败，不是因为技术不行，而是因为要求用户重新配置。</p>
+    </div>
+
+    <h3>案例 17 · 反面案例：入网流程太麻烦，用户就会绕开你</h3>
+    <div class="card">
+      <p><strong>场景：</strong>传统证书入网要用户自己下载描述文件、手动装证书、输账号——每步都可能卡住。</p>
+      <p><strong>现象（书里点明的后果）：</strong>用户会去找<strong>开放 SSID</strong>，
+      或者<strong>自己插一个家用路由器</strong>（p.722）。安全控制不但没生效，还多了一堆看不见的资产。</p>
+      <p><strong>对照解：</strong>Sentry + SM 的组合把这条流程压成"设备自己做"：
+      Meraki 自有 CA 自动发证、SM 自动推证书与 Wi-Fi payload、用户零交互连上（p.722、p.724-730）。</p>
+      <p style="margin-bottom:0"><strong>面试怎么用：</strong>这是全书最"人"的一段，也是最容易讲出彩的：
+      <strong>安全控制的有效性 = 控制强度 × 用户遵守率</strong>。
+      再强的认证，如果用户都绕过去，等于零；而提升遵守率最有效的手段是把正确路径做成最省事的那条。</p>
+    </div>
+
+    <h3>案例 18 · 排障对照表：症状 → 该去哪个系统查</h3>
+    <div class="card">
+      <p><strong>场景：</strong>本章的链路横跨设备、Dashboard、ISE、Duo 四个系统，
+      <strong>定位错系统是最大的时间浪费</strong>。下面这张表来自书中分散各处的提示，值得单独记下来。</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>症状</th><th>去哪查</th><th>依据</th></tr></thead>
+          <tbody>
+            <tr><td>上传 CSR 报错</td><td>切回<strong>旧版 MDM Settings 页</strong>重新下载 CSR</td><td>p.713</td></tr>
+            <tr><td>Apple 设备完全收不到命令</td><td>Dashboard 里 Apple push 证书是否有效 / 过期</td><td>p.714</td></tr>
+            <tr><td>合规报表说违规但不知原因</td><td>Devices 列表加 <code>Policy Reasons</code> 列（beta 页无此列）</td><td>p.718</td></tr>
+            <tr><td>配了告警但收不到邮件</td><td><code>All Network Admins</code> 不含 org admin，改三种收件人方式之一</td><td>p.718-719</td></tr>
+            <tr><td>Wi-Fi payload 里证书下拉框为空</td><td>证书 payload 是否已推、已 Save（信任锚缺失）</td><td>p.726</td></tr>
+            <tr><td>设备连不上企业 Wi-Fi</td><td>先 Meraki Dashboard 日志，再 <strong>Cisco ISE live logs</strong>，确认协议是否为 EAP-TLS</td><td>p.728-729</td></tr>
+            <tr><td>VPN 连不上</td><td>Dashboard <strong>event log</strong>；核对 Hostname / Shared Secret 是否手工抄错</td><td>p.732</td></tr>
+            <tr><td>用户点了取消，App 没装上</td><td>正常，SM 会自动重试；要静默安装须配 <code>Purchase Method</code></td><td>p.747</td></tr>
+            <tr><td>OS 更新命令发了没生效</td><td>是否 ADE + supervised；是否只执行了"下载"这一步</td><td>p.748-750</td></tr>
+            <tr><td>升级一直被推迟</td><td>用户最多可推迟 3 次，属产品设计</td><td>p.750</td></tr>
+            <tr><td>员工的应用突然全消失</td><td>是否在<strong>非 supervised</strong> 设备上用了按名隐藏 App</td><td>p.741</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p style="margin-bottom:0"><strong>面试怎么用：</strong>这张表本身就是"排障思路"的答案模板：
+      <strong>先按链路的层次定位在哪一跳失败，再进到对应系统取证</strong>，
+      而不是在 Dashboard 里反复刷新。</p>
+    </div>
+
+    <h2>四、限制与坑</h2>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>坑 / 限制</th><th>表现</th><th>依据</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><strong>Policies 只报告，不下发</strong></td>
+            <td>配完 policy 设备不会自动变合规；必须再有 payload 或 app 去修</td>
+            <td>p.716</td>
+          </tr>
+          <tr>
+            <td><strong>手动入 ADE 要恢复出厂</strong></td>
+            <td>不适用 BYOD；Android <code>device owner mode</code> 同样需要恢复出厂</td>
+            <td>p.715</td>
+          </tr>
+          <tr>
+            <td><strong>OS 更新需 ADE + supervised</strong></td>
+            <td>手动注册的 iOS 设备根本无法推 OS 更新</td>
+            <td>p.748</td>
+          </tr>
+          <tr>
+            <td><strong>隐藏指定 App 需 supervised</strong></td>
+            <td>非 supervised 上做同样操作会<strong>隐藏所有非系统应用</strong>（破坏性）</td>
+            <td>p.739-741</td>
+          </tr>
+          <tr>
+            <td><strong>非 supervised 只能按 age rating 限制</strong></td>
+            <td>无法点名禁某个应用</td>
+            <td>p.740</td>
+          </tr>
+          <tr>
+            <td><strong>Apple Configurator 不适合规模化</strong></td>
+            <td>能给设备开 supervision，但不是大批量设备的手段</td>
+            <td>p.740</td>
+          </tr>
+          <tr>
+            <td><strong>移动端没有磁盘加密开关</strong></td>
+            <td>不是产品缺失：设了 passcode 就自动加密；只有 macOS 需 FileVault payload</td>
+            <td>p.738-739</td>
+          </tr>
+          <tr>
+            <td><strong>策略名不允许空格</strong></td>
+            <td><code>Security Policy Name</code> 字段直接拒绝</td>
+            <td>p.717</td>
+          </tr>
+          <tr>
+            <td><strong><code>All Network Admins</code> 不含 org admin</strong></td>
+            <td>给 SM 建了独立网络后，合规告警没人收得到</td>
+            <td>p.718-719</td>
+          </tr>
+          <tr>
+            <td><strong>Devices 页 beta 版缺 <code>Policy Reasons</code></strong></td>
+            <td>写作时该列为空，排障要靠旧版页面</td>
+            <td>p.718</td>
+          </tr>
+          <tr>
+            <td><strong>Wi-Fi / VPN payload 是给非 Meraki 用的</strong></td>
+            <td>Meraki 自有 SSID / Sentry VPN 走一键配置；payload 用于存量设备或不兼容场景（如 WPA3、AnyConnect）</td>
+            <td>p.724、p.730、p.723</td>
+          </tr>
+          <tr>
+            <td><strong>EAP-TLS 必须两张证书都在 profile 里</strong></td>
+            <td>缺设备证书 → 只能退回密码；缺 CA 证书 → <code>Trusted Certificates</code> 无可选项</td>
+            <td>p.724-726</td>
+          </tr>
+          <tr>
+            <td><strong>证书详情在 Save 之后才显示</strong></td>
+            <td>保存前界面无元数据，容易误以为导入失败</td>
+            <td>p.724</td>
+          </tr>
+          <tr>
+            <td><strong>未设 Purchase Method 无法静默安装</strong></td>
+            <td>用户会收到通知且可取消（SM 会自动重试）</td>
+            <td>p.747</td>
+          </tr>
+          <tr>
+            <td><strong>bundle ID 由应用名自动解析</strong></td>
+            <td>解析结果可能不直观，名单拼写漂移会导致策略失效</td>
+            <td>p.717</td>
+          </tr>
+          <tr>
+            <td><strong>iOS 更新是两步流程</strong></td>
+            <td>先下载、再触发安装，不能一键完成</td>
+            <td>p.749-750</td>
+          </tr>
+          <tr>
+            <td><strong>iOS 更新最多推迟 3 次</strong></td>
+            <td>之后强制升级，属产品设计而非 bug</td>
+            <td>p.750</td>
+          </tr>
+          <tr>
+            <td><strong>Apple ID 必须开两步验证</strong></td>
+            <td>否则进不了 Apple Push Certificate Portal</td>
+            <td>p.712</td>
+          </tr>
+          <tr>
+            <td><strong>命令通道依赖 APNS</strong></td>
+            <td>通知 + 拉取模型，天然有延迟；证书过期则全线失联</td>
+            <td>p.711</td>
+          </tr>
+          <tr>
+            <td><strong>WPA3 / AnyConnect 场景与 Sentry 不兼容</strong></td>
+            <td>迁移期必须用 payload 桥接旧配置</td>
+            <td>p.723</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="callout info">
+      <span class="ico">i</span>
+      <div>
+        <p><strong>一个诚实的说明：</strong>本章<strong>没有给出任何规模上限、设备数或性能数字</strong>，
+        也没有"undocumented 行为"这类表述。唯一带"不可靠"性质的是 beta 页缺列（p.718）。
+        面试被追问"SM 能管多少台设备"时，正确姿态是承认书中未涉及，而不是编一个数字。</p>
+      </div>
+    </div>
+
+    <h2>五、面试问答</h2>
+
+    <h3>Q1：Systems Manager 和 Duo 都要买吗？它们重叠吗？</h3>
+    <div class="card">
+      <p><strong>一句话：</strong>不重叠，是 defense-in-depth：
+      <strong>SM 管与报，Duo 拦与警</strong>（p.710-711）。</p>
+      <p style="margin-bottom:0"><strong>可展开：</strong>两者覆盖同一批属性（补丁版本、屏幕锁、磁盘加密、passcode），
+      但作用方式相反：SM 是异步的管理面，改变设备的未来状态；Duo 是同步的准入面，判定当下能不能连。
+      只有 Duo → 不合规设备进不来，员工活儿干不了；只有 SM → 全靠自觉，没有强制力。
+      书里的典型配合是：SM 推补丁与配置，Duo 在设备落后时先提醒、再不达标就断网（p.748）。</p>
+    </div>
+
+    <h3>Q2：为什么配了安全策略，设备还是不合规？</h3>
+    <div class="card">
+      <p><strong>一句话：</strong>因为 <strong>Policies 只做审计，不下发任何设置或软件</strong>（p.716）。
+      策略定义"达标长什么样"，profile / app 才是达成它的手段。</p>
+      <p style="margin-bottom:0"><strong>可展开：</strong>所以操作顺序应该是<strong>先 policy 后 profile</strong>：
+      先有度量标准，才能用同一张报表证明修复有效。
+      本章的完整闭环是案例 13：策略发现缺 Cisco Secure Client → 推送该应用 → Devices 列表自动回归合规（p.748）。
+      这也是"只读层 / 可写层"这套分层存在的意义。</p>
+    </div>
+
+    <h3>Q3：MDM 下一条命令，设备多久能收到？为什么不实时？</h3>
+    <div class="card">
+      <p><strong>一句话：</strong>因为它<strong>不是长连接</strong>：APNS 先发静默通知 → 设备被唤醒后向 Dashboard
+      check-in → 取回待执行命令（p.711）。所以是最终一致，不是实时。</p>
+      <p style="margin-bottom:0"><strong>可展开：</strong>推论有三条：命令会排队，设备离线时等上线再补；
+      Apple 侧整条链路依赖 Dashboard 里那张 push 证书，<strong>过期 = 所有 Apple 设备失联</strong>；
+      证书申请时 Apple ID 必须开两步验证（p.712）。
+      面试里补一句"所以我把证书到期做成运维日历项"会显得真的运维过。</p>
+    </div>
+
+    <h3>Q4：EAP-TLS 为什么能做到用户零交互？需要几张证书？</h3>
+    <div class="card">
+      <p><strong>一句话：</strong>因为<strong>双向都用证书、不需要输密码</strong>，没有交互可做。
+      需要<strong>两张</strong>：设备证书（<code>Identity Certificate</code>）+ ISE CA 证书（<code>Trusted Certificates</code>）（p.724-730）。</p>
+      <p style="margin-bottom:0"><strong>可展开：</strong>两张证书解决的是相反的问题——
+      前者证明"我是谁"，后者让设备判断"对面那个 RADIUS 是不是真的"。
+      对比 Ch7 的 PEAP：只验服务端、客户端交密码，是单向信任。
+      现场验证要走四层：profile 声明 → 设备 MDM 详情页 → 零交互连上 → <strong>ISE live logs 确认协议是 EAP-TLS</strong>（最后一步才是硬证据）。</p>
+    </div>
+
+    <h3>Q5：为什么企业坚持用 ADE 而不是让员工手动装描述文件？</h3>
+    <div class="card">
+      <p><strong>一句话：</strong>因为<strong>能力上限由注册方式决定</strong>：
+      只有 ADE 注册 + supervised 才能按名字隐藏指定 App、才能推 OS 更新（p.739、p.748）。</p>
+      <p style="margin-bottom:0"><strong>可展开：</strong>代价是 ADE 手动加入需要恢复出厂，因此<strong>不适用 BYOD</strong>（p.715）。
+      所以正确做法是按设备归属分池：公司资产 ADE + supervised；个人设备走 BYOD，
+      Android 用 <code>managed profile mode</code> 把工作数据容器化。
+      最反直觉的一点是：在非 supervised 设备上做"隐藏某个 App"，会把<strong>所有非系统应用</strong>都隐藏掉（p.741）。</p>
+    </div>
+
+    <h3>Q6：没有 MDM 的手机，你怎么证明它加密了？</h3>
+    <div class="card">
+      <p><strong>一句话：</strong>移动端加密是<strong>设了 passcode 就自动开启</strong>的，
+      所以真正要管的不是"开加密"，而是<strong>强制 passcode</strong>（p.738-739）。</p>
+      <p style="margin-bottom:0"><strong>可展开：</strong>iOS 17.2+ 可在 <code>Face ID &amp; Passcode</code> 底部看到
+      <code>Data protection is enabled.</code>；Android 设了 PIN 即是 FBE。
+      唯一要单独处理的是 macOS —— 需要 FileVault payload 强制加密，再用 policy 审计。
+      对照标准：这就是 AC-19 的要求，控制目标与实现手段是分离的。</p>
+    </div>
+
+    <h3>Q7：怎么证明一条 MDM 策略真的生效了，而不是只写进了描述文件？</h3>
+    <div class="card">
+      <p><strong>一句话：</strong>三层取证——<strong>profile 声明</strong> → <strong>系统设置里的实际值</strong> →
+      <strong>用户尝试修改被拒</strong>（p.735-738）。</p>
+      <p style="margin-bottom:0"><strong>可展开：</strong>以 passcode 6 位 / 5 分钟 / 10 次失败为例：
+      ① MDM 详情页 <code>Contains:</code> 出现 <code>Password Policy</code>；
+      ② 点进 <code>Restrictions &gt; Passcode</code> 参数一致；
+      ③ iOS <code>Touch ID &amp; Passcode</code> 里 <code>Erase Data</code> 滑块<strong>开启且灰化</strong>。
+      只有第三层能证明"由 MDM 强制、用户改不回去"。这条正好对应 PCI DSS 4.0 1.5.1「控制不可被用户更改」。</p>
+    </div>
+
+    <h3>Q8：应用管理要满足哪些合规要求？SM 怎么覆盖？</h3>
+    <div class="card">
+      <p><strong>一句话：</strong>书里列了四条（p.742）：
+      装检测类应用（NIST CSF 2.0 <strong>DE.CM-03</strong>）、
+      用户不可更改这些控制（PCI DSS 4.0 <strong>1.5.1</strong>）、
+      能移除 EOL 软件、能阻止安装 EOL 软件（<strong>Essential Eight</strong>）。</p>
+      <p style="margin-bottom:0"><strong>可展开：</strong>对应开关是：
+      推 <code>Cisco Secure Client</code> 带来 HIPS / NetFlow / 反恶意软件；
+      <strong>取消勾 <code>Removable</code></strong> + <code>Remove with MDM</code> 实现不可卸载、退出管理时清理；
+      <code>Application Block List</code> 与 <code>Restrictions</code> 覆盖禁装 EOL 软件。
+      注意 CSF 引用的是 v1.1 的 DE.CM-3，正文写的是 2.0 的 DE.CM-03，面试时按 2.0 说更稳。</p>
+    </div>
+
+    <h3>Q9：让你给一家 500 人的公司设计端点上安全，你的顺序是什么？</h3>
+    <div class="card">
+      <p><strong>一句话：</strong>
+      <strong>先分层（谁能被管到什么程度）→ 再定基线（policy）→ 再选修复手段（profile / app）→ 最后接准入（Duo）闭环</strong>。</p>
+      <p style="margin-bottom:0"><strong>可展开：</strong>
+      ① 资产分池：公司设备走 ADE + supervised（拿到推 OS 更新、隐藏应用的能力），
+      BYOD 走 <code>managed profile mode</code>（不碰个人数据）；
+      ② 打通 Apple push 证书并把到期做成日历项；
+      ③ 用一条 <code>Corp_Security_Policy</code> 定义基线：passcode、未越狱、禁装名单、必装 Secure Client、
+      最低 OS 版本、30 天 check-in；开日报并确认收件人真的能收到；
+      ④ 建 profile：passcode payload、证书 payload、Wi-Fi payload（EAP-TLS）；
+      ⑤ 推应用与 OS 更新，观察合规自动回归；
+      ⑥ 最后把 Duo Trusted Endpoints 接上，让不合规设备在连接层就被拦。
+      这套顺序的每一步都有可验证的输出，不是"功能清单"。</p>
+    </div>
+
+    <h2>六、标准映射速查</h2>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>控制项</th><th>要求</th><th>对应的 SM 动作</th><th>依据</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>NIST 800-53 <strong>AC-11</strong></td>
+            <td>空闲后自动锁屏、需重新认证</td>
+            <td><code>Passcode</code> payload 的 <code>Auto-Lock</code>（示例 5 分钟）</td>
+            <td>p.735</td>
+          </tr>
+          <tr>
+            <td>NIST 800-53 <strong>AC-7(2)</strong></td>
+            <td>连续失败达阈值后擦除设备</td>
+            <td><code>Maximum Number of Failed Attempts</code>（示例 10 次）→ 触发 Erase Data</td>
+            <td>p.735-738</td>
+          </tr>
+          <tr>
+            <td>NIST 800-53 <strong>AC-19</strong></td>
+            <td>移动设备磁盘加密</td>
+            <td>移动端靠 passcode 自动加密；macOS 用 FileVault payload</td>
+            <td>p.738-739</td>
+          </tr>
+          <tr>
+            <td>NIST CSF 2.0 <strong>DE.CM-03</strong></td>
+            <td>通过安装应用检测潜在网络安全事件</td>
+            <td>推 Cisco Secure Client（HIPS / NetFlow / 反恶意软件）</td>
+            <td>p.742</td>
+          </tr>
+          <tr>
+            <td>PCI DSS 4.0 <strong>1.5.1</strong></td>
+            <td>这些控制用户不可更改</td>
+            <td>取消勾 <code>Removable</code>；策略参数由 MDM 锁定（Erase Data 灰化）</td>
+            <td>p.742、p.738</td>
+          </tr>
+          <tr>
+            <td><strong>Essential Eight</strong></td>
+            <td>移除并阻止安装 EOL 软件</td>
+            <td><code>Remove with MDM</code> + <code>Application Block List</code> / <code>Restrictions</code></td>
+            <td>p.742、p.739</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="callout tip">
+      <span class="ico">◆</span>
+      <div>
+        <p><strong>本章主线，一句话：</strong>
+        <strong>MDM 的价值不在"能配多少"，而在"能证明并修复"。</strong>
+        策略是传感器（只读），profile 与 app 是执行器（可写），准入（Duo）是保险丝。
+        三者叠起来才叫闭环：<em>看得见 → 修得好 → 进不来</em>。
+        面试里只要按这个顺序讲，就不会掉进"背配置项"的坑。</p>
+      </div>
+    </div>
+
+    <div class="pager">
+      <a href="deep-ch10-traffic.html">
+        <span class="dir">上一章</span>
+        <span class="ttl">Ch10 流量安全与 SASE</span>
+      </a>
+      <a class="next" href="../index.html">
+        <span class="dir">返回</span>
+        <span class="ttl">总览与阅读路线</span>
+      </a>
+    </div>
+
+  </article>
+
+  <footer>
+    <p>Cisco Meraki 企业网络安全 · 深度精读<br>
+    依据《Securing Enterprise Networks with Cisco Meraki》第 11 章（第 710–750 页）· 标注「推论」处为机制推演</p>
+  </footer>
+  </main>
+</div>
+
+<div id="overlay"></div>
+<script src="../assets/app.js"></script>
+</body>
+</html>
